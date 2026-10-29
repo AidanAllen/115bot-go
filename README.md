@@ -2,7 +2,7 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.23.4-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-[![Build Status](https://img.shields.io/badge/Build-passing-brightgreen?style=flat-square)](https://github.com/AidanAllen/115bot-go)
+[![CI](https://github.com/AidanAllen/115bot-go/actions/workflows/ci.yml/badge.svg)](https://github.com/AidanAllen/115bot-go/actions/workflows/ci.yml)
 
 115 网盘自动化 Telegram 机器人（Go 版）。把 Telegram 里的视频、文件、磁力链一键转存到你的 115 网盘。
 
