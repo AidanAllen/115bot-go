@@ -1,0 +1,53 @@
+services:
+  hi_115bot:
+    # 用预编译二进制打包（离线友好）；若要在服务器上从源码构建，把下面两行改成 dockerfile: Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    image: hi_115bot:latest
+    container_name: hi_115bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    # 必须与 telegram-bot-api 同 uid（镜像里 telegram-bot-api 用户是 101），
+    # 否则读不到它落盘的文件、也删不掉用完的缓存（目录是 750）。
+    user: "101:101"
+    volumes:
+      - ./data:/app/data
+      # 与 telegram-bot-api 挂同一个卷、且容器路径必须一模一样：
+      # 本地模式下 getFile 返回的是 telegram-bot-api 容器内的绝对路径，
+      # 只有两边路径一致，bot 才能直接读到那个文件（省掉跨境下载）。
+      - ./tgdata:/var/lib/telegram-bot-api
+    # 内存硬约束：Go 进程常驻约 15-25MB，这里留足余量并防止异常膨胀
+    mem_limit: 256m
+    memswap_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 可选：Telegram 本地 Bot API 服务
+  #
+  # 启用后收发文件不再受官方 20MB 限制（下载无限制、上传 2000MB），
+  # 且 --local 模式下文件已经落在 tgdata 卷里，bot 直接读盘上传，连下载都省了。
+  # 启用：把 .env 里的 TG_API_ENDPOINT 指向下面地址，再
+  #   docker compose --profile localapi up -d
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    container_name: hi_115bot-tgbotapi
+    restart: unless-stopped
+    profiles: ["localapi"]
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_LOCAL: "1"
+    volumes:
+      - ./tgdata:/var/lib/telegram-bot-api
+    mem_limit: 256m
+    memswap_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

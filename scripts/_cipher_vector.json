@@ -1,0 +1,28 @@
+{
+  "token": {
+    "timestamp": 1730000000,
+    "k_ec": "HQMOgKF43O7OzaN33hKNAHMAAACAtB1njtndz1WuYe1G6hIaHPyBAAEAAACx5+Bc"
+  },
+  "sig": {
+    "userkey": "0123456789abcdef0123456789abcdef",
+    "userid": "342204514",
+    "fileid": "DA39A3EE5E6B4B0D3255BFEF95601890AFD80709",
+    "target": "U_1_2491055587586025989",
+    "value": "351C70A0C889CC1B9DC93401C69FAE4DE3DB4051"
+  },
+  "body_token": {
+    "fileid": "DA39A3EE5E6B4B0D3255BFEF95601890AFD80709",
+    "filesize": 1024,
+    "sign_key": "",
+    "sign_val": "",
+    "userid": "342204514",
+    "t": 1730000000,
+    "appversion": "36.2.28",
+    "value": "004c9a843d5803bbf8334a1d11a443fa"
+  },
+  "payload_plain": "appversion=36.2.28&fileid=DA39A3EE5E6B4B0D3255BFEF95601890AFD80709&filename=%E6%B5%8B%E8%AF%95+%E8%A7%86%E9%A2%91.mp4&filesize=1024&sig=351C70A0C889CC1B9DC93401C69FAE4DE3DB4051&t=1730000000&target=U_1_2491055587586025989&token=004c9a843d5803bbf8334a1d11a443fa&topupload=true&userid=342204514&userkey=0123456789abcdef0123456789abcdef",
+  "aes": {
+    "key_hex": "fb1a19d652f5aaf7bc651d0f69bf422f",
+    "iv_hex": "69bf422f49960550a0ad44ec3446cb4c"
+  }
+}

@@ -1,0 +1,21 @@
+# 构建产物
+/bin/
+
+# 运行时数据（含 cookie 明文，务必不要提交）
+/data/
+*.db
+*.db-shm
+*.db-wal
+
+# 环境变量（含真实密钥）
+.env
+.env.*
+
+# 部署/临时目录（可能含会话、密钥或中间产物）
+/tmp/
+scripts/*.env
+*.bak
+
+# 系统/编辑器
+.DS_Store
+*.log

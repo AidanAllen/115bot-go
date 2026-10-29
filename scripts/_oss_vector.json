@@ -1,0 +1,12 @@
+{
+  "access_key_id": "STS.TESTKEYID1234567890",
+  "access_key_secret": "TESTSECRETabcdefghijklmnop",
+  "security_token": "CAIS-TEST-SECURITY-TOKEN",
+  "date": "Wed, 28 Oct 2026 14:11:49 GMT",
+  "bucket": "fhnfile",
+  "object": "6ae203ebd01704eda00212448f11e253fed327d0",
+  "callback": "{\"callbackUrl\":\"https://uplb.115.com/3.0/completeupload.php\",\"callbackBody\":\"bucket=${bucket}\"}",
+  "callback_var": "{\"x:pick_code\":\"6ae203ebf3446136b36392c5\",\"x:user_id\":\"342204514\"}",
+  "string_to_sign": "PUT\n\n\nWed, 28 Oct 2026 14:11:49 GMT\nx-oss-callback:eyJjYWxsYmFja1VybCI6Imh0dHBzOi8vdXBsYi4xMTUuY29tLzMuMC9jb21wbGV0ZXVwbG9hZC5waHAiLCJjYWxsYmFja0JvZHkiOiJidWNrZXQ9JHtidWNrZXR9In0=\nx-oss-callback-var:eyJ4OnBpY2tfY29kZSI6IjZhZTIwM2ViZjM0NDYxMzZiMzYzOTJjNSIsIng6dXNlcl9pZCI6IjM0MjIwNDUxNCJ9\nx-oss-security-token:CAIS-TEST-SECURITY-TOKEN\n/fhnfile/6ae203ebd01704eda00212448f11e253fed327d0",
+  "signature": "Qmor2AaW8/4tObBRwlaufoIdSYw="
+}
