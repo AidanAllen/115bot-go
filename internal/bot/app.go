@@ -59,6 +59,11 @@ type App struct {
 	inflight sync.Map
 	// reserved 记录本次运行已排给某个「用户+目录」的文件名，用于给重名文件加 (1)(2)。
 	reserved sync.Map
+	// groupMu 保护 groups；groups 攒的是同一个媒体组（相册）里先后到达的消息。
+	groupMu sync.Mutex
+	groups  map[string]*pendingGroup
+	// groupCaptions 缓存「媒体组 id → 说明文字」，供组内消息与事后手动 /d 复用。
+	groupCaptions sync.Map
 
 	handled atomic.Int64
 }
@@ -74,12 +79,189 @@ type transferJob struct {
 	size     int64
 	// replyTo 是用户发来文件的那条消息 id，进度消息回复到它下面。
 	replyTo int
+	// progressMsgID 是「已加入队列」那条消息的 id。
+	//
+	// 后续进度一律**就地编辑**这一条，不再新发消息：批量转存 9 个文件时，
+	// 每个文件 4 条消息会刷出 36 条，和另一个相册的消息一交错就完全看不清了。
+	progressMsgID int
+	// batch 非空表示这个任务属于某一批（相册），
+	// 整批共用一条汇总消息；index 是它在这条消息里的行号。
+	batch *transferBatch
+	index int
 	// cid 是入队时选定的目标目录，用于转存结束后归还占用的文件名。
 	cid string
 }
 
 // transferQueueSize 队列容量。满了直接拒绝并提示，避免内存被待转存的大文件信息撑爆。
 const transferQueueSize = 64
+
+// jobState 是一个转存任务当前所处的阶段。
+type jobState int
+
+const (
+	stateQueued jobState = iota
+	stateDownloading
+	stateUploading
+	stateDone
+	stateFailed
+)
+
+// batchItem 是汇总消息里的一行。
+type batchItem struct {
+	name   string
+	size   int64
+	state  jobState
+	detail string // 耗时 / 速度 / 失败原因
+	code   string // pick_code
+}
+
+// transferBatch 是一批文件（一个相册）共享的那一条进度消息。
+//
+// 一次转存 6 图 + 2 视频时，逐个发「开始下载 / 已在本地 / 正在上传 / 转存成功」
+// 会刷出几十条消息，和别的批次一交错完全没法看。
+// 整批只发这一条，谁在传、谁传完了都在这条里就地更新。
+type transferBatch struct {
+	mu      sync.Mutex
+	chatID  int64
+	msgID   int
+	replyTo int
+	started time.Time
+	items   []*batchItem
+	// lastEdit 上次刷新消息的时间，用来限流
+	lastEdit time.Time
+}
+
+// batchEditInterval 两次刷新消息的最小间隔。
+//
+// 一批里全是小文件时，几秒内会有十几次状态变化；
+// 每次都编辑会被 Telegram 限流（429），而且人眼也看不过来。
+const batchEditInterval = 1200 * time.Millisecond
+
+// claimRefresh 判断这次状态变化要不要刷新消息。
+//
+// 但整批跑完时**必须**刷新，否则最后一条状态永远停在中间态。
+func (b *transferBatch) claimRefresh() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	settled := 0
+	for _, it := range b.items {
+		if it.state == stateDone || it.state == stateFailed {
+			settled++
+		}
+	}
+	if settled == len(b.items) {
+		b.lastEdit = time.Now()
+		return true
+	}
+	if time.Since(b.lastEdit) < batchEditInterval {
+		return false
+	}
+	b.lastEdit = time.Now()
+	return true
+}
+
+// newTransferBatch 按文件名清单建一批任务。
+func newTransferBatch(chatID int64, replyTo int, items []batchItem) *transferBatch {
+	ptrs := make([]*batchItem, len(items))
+	for i := range items {
+		it := items[i]
+		it.state = stateQueued
+		ptrs[i] = &it
+	}
+	return &transferBatch{
+		chatID:  chatID,
+		replyTo: replyTo,
+		started: time.Now(),
+		items:   ptrs,
+	}
+}
+
+// set 更新某一行的状态。
+func (b *transferBatch) set(index int, st jobState, detail, code string) {
+	if b == nil || index < 0 || index >= len(b.items) {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	it := b.items[index]
+	it.state = st
+	it.detail = detail
+	if code != "" {
+		it.code = code
+	}
+}
+
+// done 统计已完成（含失败）的行数。
+func (b *transferBatch) done() (finished, failed int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, it := range b.items {
+		switch it.state {
+		case stateDone:
+			finished++
+		case stateFailed:
+			failed++
+		}
+	}
+	return finished, failed
+}
+
+// render 渲染整批的进度文本。
+//
+// 纯展示逻辑，不碰网络，方便直接断言输出。
+func (b *transferBatch) render() string {
+	if b == nil {
+		return ""
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	total := len(b.items)
+	finished, failed := 0, 0
+	for _, it := range b.items {
+		switch it.state {
+		case stateDone:
+			finished++
+		case stateFailed:
+			failed++
+		}
+	}
+
+	var sb strings.Builder
+	switch {
+	case finished+failed == total:
+		sb.WriteString(fmt.Sprintf("✅ <b>转存完成</b> · %d 个文件", total))
+		if failed > 0 {
+			sb.WriteString(fmt.Sprintf("，%d 个失败", failed))
+		}
+		sb.WriteString(fmt.Sprintf("，用时 %s\n", humanDuration(time.Since(b.started))))
+	default:
+		sb.WriteString(fmt.Sprintf("📦 <b>正在转存</b> · %d 个文件（已完成 %d）\n", total, finished))
+	}
+
+	for i, it := range b.items {
+		mark := "⏳"
+		switch it.state {
+		case stateDownloading:
+			mark = "⬇️"
+		case stateUploading:
+			mark = "⬆️"
+		case stateDone:
+			mark = "✅"
+		case stateFailed:
+			mark = "❌"
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s %s", i+1, mark, escapeHTML(it.name)))
+		if it.detail != "" {
+			sb.WriteString(" · " + it.detail)
+		}
+		// pick_code 暂不展示：一批 8 个文件会在一条消息里堆 8 行提取码，
+		// 把真正要看的文件名和状态挤没了。数据仍在 it.code 里，要展示随时能加回来。
+		sb.WriteString("\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
 
 // New 构建 App。会立即校验 Token 并完成一次 getMe，失败即返回错误。
 func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*App, error) {
@@ -106,6 +288,7 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*App, error) {
 		logins:    make(map[int64]*qrLoginState),
 		slots:     make(chan struct{}, maxConcurrentUpdates),
 		transferQ: make(chan transferJob, transferQueueSize),
+		groups:    make(map[string]*pendingGroup),
 	}
 	app.migrateLegacyAccount()
 	go app.transferWorker()
@@ -270,6 +453,81 @@ func (a *App) sendReply(chatID int64, replyToMessageID int, text string) {
 	a.sendMsg(msg)
 }
 
+// sendReplyID 发送回复消息并返回新消息的 id，失败返回 0。
+func (a *App) sendReplyID(chatID int64, replyToMessageID int, text string) int {
+	msg := a.newMessage(chatID, text)
+	if replyToMessageID > 0 {
+		msg.ReplyToMessageID = replyToMessageID
+	}
+	sent, err := a.api.Send(msg)
+	if err != nil {
+		a.log.Warn("发送消息失败", "chat_id", chatID, "err", err)
+		return 0
+	}
+	return sent.MessageID
+}
+
+// notify 汇报一次转存状态。
+//
+// 单文件：就地改写它自己那条「已加入队列」消息。
+// 批量（相册）：改写整批共用的那一条汇总消息，只更新自己那一行。
+func (a *App) notify(job transferJob, st jobState, detail, code string) {
+	if job.batch != nil {
+		job.batch.set(job.index, st, detail, code)
+		if job.batch.claimRefresh() {
+			a.editMessage(job.batch.chatID, job.batch.msgID, job.batch.render())
+		}
+		return
+	}
+	a.report(job, job.progressText(st, detail, code))
+}
+
+// progressText 生成单文件转存的进度文案。
+func (job transferJob) progressText(st jobState, detail, code string) string {
+	name := escapeHTML(job.fileName)
+	switch st {
+	case stateDownloading:
+		return fmt.Sprintf(TxtTransferDownloading, name, humanSize(job.size))
+	case stateUploading:
+		return fmt.Sprintf(TxtTransferLocalReady, name, humanSize(job.size), detail)
+	case stateDone:
+		return fmt.Sprintf(TxtTransferSuccess, name, detail, code)
+	case stateFailed:
+		return fmt.Sprintf(TxtInternalErr, escapeHTML(detail))
+	default:
+		return fmt.Sprintf(TxtTransferQueued, name, humanSize(job.size), 1)
+	}
+}
+
+// report 更新一个转存任务的进度。
+//
+// 优先就地编辑「已加入队列」那条消息：一个文件的入队 → 下载 → 上传 → 成功
+// 全程只占一条消息。编辑失败（消息被删、权限变化等）才退回新发一条，
+// 宁可多一条也不能把结果吞掉。
+func (a *App) report(job transferJob, text string) {
+	if job.progressMsgID > 0 && a.editMessage(job.ac.ChatID, job.progressMsgID, text) {
+		return
+	}
+	a.sendReply(job.ac.ChatID, job.replyTo, text)
+}
+
+// editMessage 就地改写一条已发出的消息，返回是否成功。
+func (a *App) editMessage(chatID int64, messageID int, text string) bool {
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	edit.ParseMode = "HTML"
+	edit.DisableWebPagePreview = true
+	_, err := a.api.Request(edit)
+	if err == nil {
+		return true
+	}
+	// 内容没变化时 Telegram 会报这个错，不算失败，也不该为此重发一条
+	if strings.Contains(err.Error(), "message is not modified") {
+		return true
+	}
+	a.log.Debug("更新进度消息失败，改为新发一条", "chat_id", chatID, "msg_id", messageID, "err", err)
+	return false
+}
+
 // sendWithMenu 发送带内联键盘的 HTML 消息。
 func (a *App) sendWithMenu(chatID int64, text string, kb tgbotapi.InlineKeyboardMarkup) {
 	msg := a.newMessage(chatID, text)
@@ -370,6 +628,22 @@ func humanSize(n int64) string {
 		}
 	}
 	return fmt.Sprintf("%.2f PB", v/unit)
+}
+
+// humanDuration 把耗时格式化为「1 分 12 秒」这样的中文读法。
+func humanDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	total := int(d.Seconds())
+	switch {
+	case total < 60:
+		return fmt.Sprintf("%d 秒", total)
+	case total < 3600:
+		return fmt.Sprintf("%d 分 %d 秒", total/60, total%60)
+	default:
+		return fmt.Sprintf("%d 小时 %d 分", total/3600, total%3600/60)
+	}
 }
 
 // orDefault 为空时返回默认值。

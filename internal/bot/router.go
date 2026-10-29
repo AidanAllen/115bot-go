@@ -36,7 +36,13 @@ func (a *App) handleMessage(ctx context.Context, m *tgbotapi.Message) {
 	// 自动转存：开关打开后，发过来的每个媒体文件直接排进队列，
 	// 不用再逐条回复 /d。放在磁力链之前，一条「视频 + 磁力链说明」两者都会处理。
 	if a.userAutoTransfer(ac.UserID) && hasMedia(m) {
-		a.enqueueTransfer(ctx, ac, m, "")
+		// 相册（媒体组）要先攒一攒：说明文字只挂在组内某一条上，
+		// 立刻入队的话其余文件只能落回 photo_xxx.jpg 这类兜底名。
+		if m.MediaGroupID != "" {
+			a.enqueueMediaGroup(ac, m)
+		} else {
+			a.enqueueTransfer(ctx, ac, m, "")
+		}
 	}
 
 	// 纯文本消息：尝试提取磁力链 / ed2k

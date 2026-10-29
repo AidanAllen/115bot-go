@@ -108,10 +108,18 @@ func (a *App) handleAutoLinks(ctx context.Context, m *tgbotapi.Message) {
 // 只做「能不能转」的检查与解析，真正上传由队列 worker 串行执行——
 // 自动转存开启后可能一次来好几个文件，逐个同步执行会互相抢带宽。
 func (a *App) enqueueTransfer(ctx context.Context, ac actor, target *tgbotapi.Message, rename string) {
+	a.enqueueTransferIn(ctx, ac, target, rename, nil, 0)
+}
+
+// enqueueTransferIn 排一个转存任务。batch 非空表示它属于某一批，
+// 进度会汇总到 batch 那一条消息里（index 是行号），不再单独发消息。
+func (a *App) enqueueTransferIn(ctx context.Context, ac actor, target *tgbotapi.Message, rename string, batch *transferBatch, index int) {
 	if !a.userEnabled(ac.UserID) {
 		a.send(ac.ChatID, TxtTransferDisabled)
 		return
 	}
+	// 手动对相册里某个文件 /d 时，说明可能挂在同组另一条消息上，先补回来
+	target = a.withGroupCaption(target)
 	fileID, fileName, size := pickMedia(target)
 	if fileID == "" {
 		a.send(ac.ChatID, TxtTransferNoFile)
@@ -160,36 +168,51 @@ func (a *App) enqueueTransfer(ctx context.Context, ac actor, target *tgbotapi.Me
 	fileName = uniqueName(fileName, a.takenNames(ac.UserID, cid))
 	a.reserveName(ac.UserID, cid, fileName)
 
-	pos := a.queueTransfer(transferJob{ac: ac, fileID: fileID, fileName: fileName, size: size, replyTo: replyTo, cid: cid})
+	// 批量时整批共用 batch 那一条消息，不需要再单发「已加入队列」；
+	// 单文件则先发一条并记住 id，之后下载、上传、成功全部就地改写它。
+	progressMsgID := 0
+	if batch == nil {
+		progressMsgID = a.sendReplyID(ac.ChatID, replyTo,
+			fmt.Sprintf(TxtTransferQueued, escapeHTML(fileName), humanSize(size), a.queueDepth()+1))
+	}
+
+	pos := a.queueTransfer(transferJob{
+		ac: ac, fileID: fileID, fileName: fileName, size: size,
+		replyTo: replyTo, cid: cid, progressMsgID: progressMsgID,
+		batch: batch, index: index,
+	})
 	if pos == 0 {
 		// 入队失败要把去重标记与名字占位一起撤掉，否则之后永远排不进来
 		a.inflight.Delete(fileID)
 		a.releaseName(ac.UserID, cid, fileName)
 		a.log.Warn("转存队列已满，拒绝新任务", "user_id", ac.UserID, "file", fileName, "上限", transferQueueSize)
-		a.sendReply(ac.ChatID, replyTo, fmt.Sprintf(TxtTransferQueueFull, transferQueueSize, a.queueDepth()))
+		if batch != nil {
+			batch.set(index, stateFailed, "队列已满", "")
+			a.editMessage(batch.chatID, batch.msgID, batch.render())
+		} else {
+			a.sendReply(ac.ChatID, replyTo, fmt.Sprintf(TxtTransferQueueFull, transferQueueSize, a.queueDepth()))
+		}
 		return
 	}
 	a.log.Info("转存入队", "user_id", ac.UserID, "file", fileName, "位置", pos, "待处理", a.queueDepth())
-	a.sendReply(ac.ChatID, replyTo, fmt.Sprintf(TxtTransferQueued, escapeHTML(fileName), humanSize(size), pos))
 }
 
 // runTransfer 真正执行一次转存：下载 → 上传 → 回报。
 // 由队列 worker 串行调用，同一时刻只会有一个在跑。
 func (a *App) runTransfer(ctx context.Context, job transferJob) {
 	ac := job.ac
-	chatID := ac.ChatID
 	fileName, fileID, size := job.fileName, job.fileID, job.size
 	// 无论成败都归还这个名字：失败的文件并不存在，名字可以再用
 	defer a.releaseName(ac.UserID, job.cid, fileName)
 
 	up := a.userUploader(ac.UserID)
 	if !up.Available() {
-		a.sendReply(chatID, job.replyTo, TxtTransferNoUploader)
+		a.notify(job, stateFailed, TxtTransferNoUploader, "")
 		return
 	}
 	cid := a.userTransferCID(ac.UserID)
 	if cid == "" {
-		a.sendReply(chatID, job.replyTo, TxtNeedTransferCID)
+		a.notify(job, stateFailed, TxtNeedTransferCID, "")
 		return
 	}
 
@@ -202,15 +225,31 @@ func (a *App) runTransfer(ctx context.Context, job transferJob) {
 		_ = a.st.UpdateTask(taskID, store.StatusRunning, "")
 	}
 
-	a.sendReply(chatID, job.replyTo, fmt.Sprintf(TxtTransferDownloading, escapeHTML(fileName), humanSize(size)))
-
-	localPath, fromLocal, err := a.obtainLocalFile(ctx, fileID, fileName)
-	if err != nil {
+	// 先判断文件是不是已经在本地磁盘上：本地 Bot API 命中的话根本没有「下载」这一步，
+	// 发一条「开始下载」再补一句「其实不用下」纯属噪音（批量转存时会被放大 9 倍）。
+	f, fromLocal, ferr := a.resolveFile(fileID)
+	if ferr != nil {
 		if taskID > 0 {
-			_ = a.st.UpdateTask(taskID, store.StatusFailed, err.Error())
+			_ = a.st.UpdateTask(taskID, store.StatusFailed, ferr.Error())
 		}
-		a.sendReply(chatID, job.replyTo, fmt.Sprintf(TxtInternalErr, escapeHTML(err.Error())))
+		a.notify(job, stateFailed, ferr.Error(), "")
 		return
+	}
+
+	var localPath string
+	if fromLocal {
+		localPath = f.FilePath
+	} else {
+		a.notify(job, stateDownloading, "", "")
+		p, err := a.downloadTelegramFile(ctx, f, fileName)
+		if err != nil {
+			if taskID > 0 {
+				_ = a.st.UpdateTask(taskID, store.StatusFailed, err.Error())
+			}
+			a.notify(job, stateFailed, err.Error(), "")
+			return
+		}
+		localPath = p
 	}
 	// 两种来源都要清理：临时副本不删会堆积，本地 API 的缓存不删会撑爆磁盘
 	defer func() {
@@ -223,13 +262,8 @@ func (a *App) runTransfer(ctx context.Context, job transferJob) {
 		size = fi.Size()
 	}
 
-	if fromLocal {
-		a.sendReply(chatID, job.replyTo, TxtTransferLocalReady)
-	} else {
-		a.sendReply(chatID, job.replyTo, TxtTransferDownloaded)
-	}
 	// 上传可能很久（受机房上行带宽限制），提前告知预估耗时，避免用户以为卡死
-	a.sendReply(chatID, job.replyTo, fmt.Sprintf(TxtTransferUploading, humanSize(size), estimateUploadHuman(size)))
+	a.notify(job, stateUploading, estimateUploadHuman(size), "")
 
 	// 上传超时按文件大小估算：跨境链路实测低至 30KB/s，
 	// 固定 10 分钟会让几十 MB 的视频必定超时。
@@ -241,7 +275,7 @@ func (a *App) runTransfer(ctx context.Context, job transferJob) {
 		if taskID > 0 {
 			_ = a.st.UpdateTask(taskID, store.StatusFailed, err.Error())
 		}
-		a.sendReply(chatID, job.replyTo, fmt.Sprintf(TxtInternalErr, escapeHTML(friendlyErr(err))))
+		a.notify(job, stateFailed, friendlyErr(err), "")
 		return
 	}
 
@@ -249,9 +283,14 @@ func (a *App) runTransfer(ctx context.Context, job transferJob) {
 		_ = a.st.UpdateTask(taskID, store.StatusSuccess, "")
 	}
 	// 报出实测平均速度：慢的时候用户能一眼看出是链路限速还是卡住了
-	avg := humanSize(int64(float64(size) / math.Max(time.Since(start).Seconds(), 0.001)))
-	a.sendReply(chatID, job.replyTo, fmt.Sprintf(TxtTransferSuccess,
-		escapeHTML(fileName), up.Name(), int(time.Since(start).Seconds()), avg, pickCode))
+	elapsed := int(time.Since(start).Seconds())
+	avg := humanSize(int64(float64(size) / math.Max(float64(elapsed), 0.001)))
+	// 单条消息放得下完整信息；批量时那一行只放「耗时 · 速度」，避免行太长
+	detail := fmt.Sprintf("方式：%s，耗时 %ds，平均 %s/s", up.Name(), elapsed, avg)
+	if job.batch != nil {
+		detail = fmt.Sprintf("%ds · %s/s", elapsed, avg)
+	}
+	a.notify(job, stateDone, detail, pickCode)
 }
 
 // estimateUploadHuman 给出人类可读的上传耗时预估。
@@ -356,24 +395,39 @@ func mediaName(caption, rawName, ext, fallback string) string {
 }
 
 // nameFromCaption 把说明文字当文件名用；不可用时返回空串。
+//
+// 逐行找第一行「去掉 #标签后还有内容」的文字：
+// 频道转发里经常是一行「#合集 #分享」占首位、真正的标题在后面，
+// 只取第一行的话文件就会被叫成「#合集 #分享.jpg」。
 func nameFromCaption(caption, ext string) string {
-	c := strings.TrimSpace(caption)
-	if c == "" {
+	if strings.TrimSpace(caption) == "" {
 		return ""
 	}
-	// 只取第一行：多行说明通常只有第一行是标题，后面是正文、标签
-	if i := strings.IndexAny(c, "\r\n"); i >= 0 {
-		c = c[:i]
+	for _, line := range strings.Split(caption, "\n") {
+		c := stripHashtags(line)
+		if c == "" || looksLikeLink(c) {
+			continue
+		}
+		// 说明里已经带了扩展名就不要再补一个，避免出现「xx.mp4.mp4」
+		if hasFileExt(c) {
+			return c
+		}
+		return c + ext
 	}
-	c = strings.TrimSpace(c)
-	if c == "" || looksLikeLink(c) {
-		return ""
+	return ""
+}
+
+// stripHashtags 去掉 #标签，剩下的是标题本体。
+// 整行都是标签时返回空串，交给调用方继续看下一行。
+func stripHashtags(s string) string {
+	kept := make([]string, 0, 4)
+	for _, w := range strings.Fields(s) {
+		if strings.HasPrefix(w, "#") {
+			continue
+		}
+		kept = append(kept, w)
 	}
-	// 说明里已经带了扩展名就不要再补一个，避免出现「xx.mp4.mp4」
-	if hasFileExt(c) {
-		return c
-	}
-	return c + ext
+	return strings.TrimSpace(strings.Join(kept, " "))
 }
 
 // looksLikeLink 判断文本是不是链接或命令，避免把磁力链、URL 当成文件名。
@@ -481,7 +535,7 @@ func hasMedia(m *tgbotapi.Message) bool {
 		m.VideoNote != nil || m.Animation != nil || len(m.Photo) > 0
 }
 
-// obtainLocalFile 取到文件的本地路径。
+// resolveFile 取文件信息，并判断能否直接读本地磁盘。
 //
 // 两条路子：
 //  1. 本地 Bot API（telegram-bot-api --local）：getFile 直接返回 telegram-bot-api
@@ -489,13 +543,16 @@ func hasMedia(m *tgbotapi.Message) bool {
 //     挂到同一个路径，就能直接读它，跨境下载这一步全省了——旧 Java bot 靠这个扛住 1.4GB 视频。
 //  2. 官方 Bot API：只能走 HTTP 下载到临时目录，有 20MB 硬限制。
 //
-// fromLocal 表示路径是不是直接来自本地 Bot API 的缓存目录。
+// local 表示是不是直接来自本地 Bot API 的缓存目录。
 // 两种来源用完都必须删：临时副本不删会堆积，本地 API 的缓存不删会撑爆磁盘
 // （旧 bot 日志里的「删除上传完成，本地视频：…/videos/file_388.mp4」就是这一步）。
-func (a *App) obtainLocalFile(ctx context.Context, fileID, fileName string) (path string, fromLocal bool, err error) {
-	f, err := a.api.GetFile(tgbotapi.FileConfig{FileID: fileID})
+//
+// 拆成 resolveFile + downloadTelegramFile 两步，是为了让调用方能**先知道**走哪条路：
+// 命中本地时根本不该发「开始下载」这种提示。
+func (a *App) resolveFile(fileID string) (f tgbotapi.File, local bool, err error) {
+	f, err = a.api.GetFile(tgbotapi.FileConfig{FileID: fileID})
 	if err != nil {
-		return "", false, fmt.Errorf("获取文件信息失败（超过官方 Bot API 20MB 限制的文件需启用本地 Bot API 服务）: %w", err)
+		return f, false, fmt.Errorf("获取文件信息失败（超过官方 Bot API 20MB 限制的文件需启用本地 Bot API 服务）: %w", err)
 	}
 
 	// 本地 Bot API 直接给绝对路径；官方 API 给的是相对路径（photos/file_1.jpg 这种）。
@@ -503,16 +560,14 @@ func (a *App) obtainLocalFile(ctx context.Context, fileID, fileName string) (pat
 		st, serr := os.Stat(f.FilePath)
 		if serr == nil && st.Mode().IsRegular() {
 			if a.cfg.MaxDownloadBytes > 0 && st.Size() > a.cfg.MaxDownloadBytes {
-				return "", false, fmt.Errorf("文件超过大小限制 %s", humanSize(a.cfg.MaxDownloadBytes))
+				return f, false, fmt.Errorf("文件超过大小限制 %s", humanSize(a.cfg.MaxDownloadBytes))
 			}
-			return f.FilePath, true, nil
+			return f, true, nil
 		}
 		// 路径不可读就退回 HTTP 下载，不让整个转存卡死在这一步
 		a.log.Warn("本地 Bot API 路径不可读，退回 HTTP 下载", "path", f.FilePath)
 	}
-
-	dst, err := a.downloadTelegramFile(ctx, f, fileName)
-	return dst, false, err
+	return f, false, nil
 }
 
 // fileDirectURL 拼出文件的下载地址。
