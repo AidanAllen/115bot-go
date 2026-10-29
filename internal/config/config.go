@@ -52,6 +52,17 @@ type Config struct {
 	// MaxDownloadBytes 单个文件下载上限（0 表示不限制）。
 	MaxDownloadBytes int64
 
+	// TGAPIID / TGAPIHash 来自 https://my.telegram.org/ 的应用凭据。
+	//
+	// 配了这两个，超过官方 20MB 限制的文件会改走 MTProto 直连下载
+	// （不需要本地 telegram-bot-api 服务，Windows 上跑 exe 也有效）；
+	// 不配就退回官方 Bot API，仍受 20MB 限制。
+	TGAPIID   int
+	TGAPIHash string
+
+	// MTProtoSession MTProto 会话保存路径（含 auth key，属敏感数据，别外传）。
+	MTProtoSession string
+
 	// LogLevel debug / info / warn / error
 	LogLevel string
 }
@@ -72,6 +83,9 @@ func Load() (*Config, error) {
 		PollTimeout:      envDuration("POLL_TIMEOUT", 60*time.Second),
 		HTTPTimeout:      envDuration("HTTP_TIMEOUT", 30*time.Second),
 		MaxDownloadBytes: envInt64("MAX_DOWNLOAD_BYTES", 0),
+		TGAPIID:          int(envInt64("TG_API_ID", 0)),
+		TGAPIHash:        strings.TrimSpace(os.Getenv("TG_API_HASH")),
+		MTProtoSession:   envOr("TG_MTPROTO_SESSION", "./data/tg.session.json"),
 		LogLevel:         envOr("LOG_LEVEL", "info"),
 	}
 
@@ -109,6 +123,11 @@ func Load() (*Config, error) {
 	}
 	if c.MaxDownloadBytes < 0 {
 		return nil, errors.New("MAX_DOWNLOAD_BYTES 不能为负数")
+	}
+	// 只填一半等于没配，而且比不配更难排查（用户以为开了大文件下载，其实没生效），
+	// 所以这里直接快速失败。
+	if (c.TGAPIID > 0) != (c.TGAPIHash != "") {
+		return nil, errors.New("TG_API_ID 与 TG_API_HASH 必须同时配置（到 https://my.telegram.org/ 申请）")
 	}
 	return c, nil
 }

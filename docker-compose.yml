@@ -38,10 +38,23 @@ services:
   # 启用：把 .env 里的 TG_API_ENDPOINT 指向下面地址，再
   #   docker compose --profile localapi up -d
   telegram-bot-api:
-    image: aiogram/telegram-bot-api:latest
+    # 固定 Bot API 版本，不要用 latest：
+    #   latest 每次被重建都可能换掉 tdlib（Hub 上同一个 10.3 都重建过多次，
+    #   实测 2026-10 一个月内至少两次），一旦 pull 到新版，行为和目录约定
+    #   都可能变，而本项目的 Go 客户端是 go-telegram-bot-api v5.5.1（Bot API 5.x），
+    #   跨版本差很大，出问题往往是「整条消息解析失败」这种静默故障。
+    # 该 tag 是 multi-arch manifest，amd64/arm64 机器都直接写 10.3 即可；
+    # 想钉到某一次具体构建就改成 @sha256:<digest>（见 README「升级本地 Bot API」）。
+    # 升级前先备份 tgdata：tdlib 的库只升不降，换回旧镜像可能起不来。
+    image: aiogram/telegram-bot-api:10.3
     container_name: hi_115bot-tgbotapi
     restart: unless-stopped
     profiles: ["localapi"]
+    # 只绑回环：Windows 上跑 exe（不走 compose）时，宿主也要能访问这个文件端点，
+    # 映射出来供 http://127.0.0.1:8081 使用；不绑到 0.0.0.0 是因为该端口无鉴权，
+    # 谁访问到都能下载 bot 收到的文件。
+    ports:
+      - "127.0.0.1:8081:8081"
     environment:
       TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}

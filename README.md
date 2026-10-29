@@ -121,7 +121,8 @@ rem 编辑 .env 填入 BOT_TOKEN
 
 > Windows 下优雅退出只响应 Ctrl+C（Windows 没有 Unix 的 SIGTERM 语义）；
 > Linux 下 `docker stop` / systemd 发的 SIGTERM 同样会优雅退出。
-> 本地 Bot API（`telegram-bot-api`）只有 Linux 容器方案，Windows 直连时仍受官方 20MB 限制。
+> 想突破 20MB：本地 Bot API 服务端本身只有 Linux 容器镜像，Windows 上要靠
+> Docker Desktop 跑它（见下节），exe 通过 HTTP 用它；不跑就仍是官方 20MB 限制。
 
 ARM 机器用 Docker：
 
@@ -147,7 +148,67 @@ docker run --rm --env-file .env -v "$PWD/data:/app/data" \
   hi_115bot:latest --check-cookie                        # 校验 115 登录态
 ```
 
-### 5. 升级（一键部署脚本）
+### 5. 突破 20MB：内置 MTProto 下载（推荐）
+
+配好 `TG_API_ID` + `TG_API_HASH` 即可，**不需要 Docker，Windows 跑 exe 也有效**：
+
+```env
+TG_API_ID=12345678
+TG_API_HASH=0123456789abcdef0123456789abcdef
+```
+
+到 <https://my.telegram.org/> 申请（与本地 Bot API 服务用的是同一组凭据，可以复用）。
+配了之后：
+
+- 超过 20MB 的文件自动走 MTProto 下载（官方 API 那条路必然失败，不会白跑一趟）；
+- 20MB 以内仍走官方 HTTP 下载，零额外开销；
+- 官方下载失败时会用 MTProto 再兜一次；
+- 没配就完全等同老版本行为。
+
+实现在 `internal/tgfile`：用 gotd/td（纯 Go 的 MTProto 2.0）把 Bot API 的
+`file_id` 就地解码成文件位置，再直连对应 DC 下载。收发消息仍然走 Bot API，
+命令、相册、批量进度那些逻辑一行没动。
+
+> 需要代理的环境设 `ALL_PROXY` / `NO_PROXY`（SOCKS5，golang.org/x/net/proxy 语义）。
+> MTProto 会话（含 auth key）默认存在 `./data/tg.session.json`，属敏感数据。
+
+### 5b. 备选：Windows 下跑本地 Bot API 容器（不配 MTProto 凭据时）
+
+`telegram-bot-api` 服务端只有 Linux 镜像，Windows 跑不了原生版，但可以用
+Docker Desktop（WSL2 后端）单独起这一个容器，exe 走 HTTP 用它：
+
+```powershell
+docker run -d --name tgbotapi `
+  -p 127.0.0.1:8081:8081 `
+  -v "${PWD}\tgdata:/var/lib/telegram-bot-api" `
+  -e TELEGRAM_API_ID=12345678 `
+  -e TELEGRAM_API_HASH=0123456789abcdef0123456789abcdef `
+  -e TELEGRAM_LOCAL=1 `
+  aiogram/telegram-bot-api:10.3
+```
+
+（CMD 里把行尾反引号换成 `^`，`${PWD}` 换成 `%CD%`。api_id / api_hash 到
+<https://my.telegram.org/> 申请，属于凭据，别外传。）
+
+然后在 `.env` 里指过去：
+
+```env
+TG_API_ENDPOINT=http://127.0.0.1:8081/bot%s/%s
+```
+
+验证：`curl http://127.0.0.1:8081/bot<TOKEN>/getMe` 能返回 bot 信息即可。
+
+**Windows 与 Linux 的差异**：`--local` 返回的是 Linux 容器内的绝对路径
+（`/var/lib/telegram-bot-api/...`），exe 上 `os.Stat` 不到，程序会打一行
+「本地 Bot API 路径不可读，退回 HTTP 下载」并自动走回环 HTTP 拉文件——
+**20MB 限制照样被突破**（限制来自官方服务器，不在这一步），只是少了
+Linux 下的「零拷贝直读」，多一次本机 HTTP 拷贝（回环速度，可忽略）。
+
+> `tgdata/` 会缓存 bot 收到的所有文件，注意留磁盘；
+> 同一个 bot token 不能同时挂官方 server 和本地 server（会互相踢），
+> 想换回官方，把 `TG_API_ENDPOINT` 删掉重启即可。
+
+### 6. 升级（一键部署脚本）
 
 已经在服务器上跑起来的，用仓库里的脚本更新最省事——它会
 编译 → 上传 → 备份数据库 → 原子换二进制 → 重建容器 → **清理上一版遗留的镜像与临时文件**：
@@ -162,6 +223,29 @@ TARGET_ARCH=arm64 ./scripts/deploy.sh 1.1.0   # 目标是 ARM 服务器
 清理范围**只针对本项目**（按「悬空 + 入口 `/app/115bot`」识别），不会误删其他应用的镜像。
 
 > 重建容器会中断进行中的转存任务，大文件转存期间别发版。
+
+### 7. 本地 Bot API 的版本为什么钉死在 10.3
+
+compose 里写的是 `aiogram/telegram-bot-api:10.3`，不是 `latest`，原因：
+
+- **latest 会漂**：Hub 上同一个 `10.3` 在 2026-10 内就被重建过多次
+  （实测 10-28 与 10-29 两次 digest 不同），每次 pull 都可能换掉 tdlib，
+  行为和目录约定都可能变，出问题时往往表现为「整条消息解析失败」这种静默故障。
+- **本项目客户端库是 `go-telegram-bot-api v5.5.1`（对应 Bot API 5.x）**，
+  与服务端 10.3 差了好几个大版本。目前用到的字段
+  （`Photo` / `Video` / `Document` / `MediaGroupID` / `Caption` / `FileID` / `FileSize`、
+  `getFile.FilePath` 在 `--local` 下返回绝对路径）都是常年稳定的老字段，实测可用；
+  已知边界是 Bot API 7.0 起的 `external_reply`——跨聊天的引用回复不再给
+  `reply_to_message`，v5.5.1 解析不到，那种情况下 `/d` 回复会找不到文件
+  （同聊天内回复正常）。
+- **tdlib 的库只升不降**：换回旧镜像可能起不来。
+
+`10.3` 是 multi-arch manifest，amd64 / arm64 机器都写同一个 tag；
+还有 `10.3-linuxarmv7`、`10.3-linux386` 等专用 tag。
+想钉到某一次具体构建，把 tag 换成 `@sha256:<digest>`（`docker inspect` 可查）。
+
+升级步骤：备份 `tgdata/` → 改 tag → `docker compose --profile localapi up -d` →
+验证 `getMe` 与一次真实转存 → 不行就改回原 tag。
 
 ## 命令速查
 
@@ -188,7 +272,8 @@ TARGET_ARCH=arm64 ./scripts/deploy.sh 1.1.0   # 目标是 ARM 服务器
 |---|---|---|
 | `BOT_TOKEN` | ✅ | Telegram Bot Token |
 | `OWNER_ID` | | 所有者 id（仅归属标记，不限制使用），留空则首个 `/setid` 生效 |
-| `TG_API_ENDPOINT` | | 本地 Bot API 端点，收发 >20MB 文件时必须配置 |
+| `TG_API_ENDPOINT` | | 本地 Bot API 端点（Linux 容器方案），见下 |
+| `TG_API_ID` + `TG_API_HASH` | | **大文件（>20MB）推荐**：MTProto 直连下载，不需要 Docker，Windows exe 同样有效 |
 
 > 从 v0.2.0 起，115 凭据（cookie / UA / 通道 / 目录）**按用户存数据库**，环境变量只作兜底。
 > 多用户部署时 `TRANSFER_CID` / `OFFLINE_CID` / `DEFAULT_UA` 请留空。
@@ -205,6 +290,7 @@ internal/bot      Telegram 层（命令 / 路由 / 菜单 / 状态机）
                   pathutil.go     跨平台路径判断（本地 Bot API 给的是 POSIX 绝对路径）
                   mediagroup.go   相册缓冲与共享说明命名
                   app.go          转存队列 / 批量进度消息
+internal/tgfile   MTProto 直连下载（gotd/td），用于突破官方 20MB 限制
 scripts           deploy.sh（一键部署+清理）、deploy-remote.sh（服务器端）、
                   build-all.sh（多平台构建）、smoke_bot.py（本地冒烟）
 .github/workflows ci.yml（测试 + 7 平台交叉编译校验）、
@@ -238,9 +324,10 @@ done
 
 ## 已知限制
 
-- **20MB 门槛**：官方 Bot API 限制 `getFile` 20MB、上传 50MB。要收发更大的文件
-  必须启用本地 Bot API（`--profile localapi` + `TG_API_ENDPOINT`），**只有 Linux 容器方案**，
-  Windows / macOS 直连时仍受该限制
+- **20MB 门槛**：官方 Bot API 限制 `getFile` 20MB、上传 50MB。
+  突破办法有二选一：配置 `TG_API_ID` + `TG_API_HASH` 走内置 MTProto 下载（推荐，
+  跨平台、无需 Docker），或部署本地 Bot API 服务（只有 Linux 容器镜像，
+  Windows 上要靠 Docker Desktop 跑，见 5b）。两者都不做就仍受 20MB 限制
 - 上传走 115 网页通道，不支持分片：115 回调校验的 `${sha1}` 在分片模式拿不到整体值，合并会报 `errno=10002`
 - 上传吞吐受部署机器上行带宽限制，跨境部署时较慢（实测日本 → 阿里云深圳丢包约 15%，
   真实上传约 30KB/s；命中 115 秒传时是秒级完成）。大文件建议优先用离线下载

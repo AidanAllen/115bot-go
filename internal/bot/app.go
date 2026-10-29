@@ -16,10 +16,11 @@ import (
 	"github.com/AidanAllen/115bot-go/internal/config"
 	"github.com/AidanAllen/115bot-go/internal/p115"
 	"github.com/AidanAllen/115bot-go/internal/store"
+	"github.com/AidanAllen/115bot-go/internal/tgfile"
 )
 
 // Version 由构建时通过 -ldflags 注入。
-var Version = "1.1.0"
+var Version = "1.2.0"
 
 // BuildTime 构建时间，同样由 -ldflags 注入。
 var BuildTime = "unknown"
@@ -38,6 +39,10 @@ type App struct {
 	log      *slog.Logger
 	sessions *sessionManager
 	started  time.Time
+
+	// mtproto 是「大文件直连下载」通道，未配置 TG_API_ID/TG_API_HASH 时为 nil，
+	// 此时所有下载仍走官方 Bot API（20MB 封顶）。
+	mtproto *tgfile.Client
 
 	// loginMu 保护 logins；每个 chat 同时只允许一条扫码登录流程。
 	loginMu sync.Mutex
@@ -270,6 +275,23 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*App, error) {
 		return nil, fmt.Errorf("初始化 Telegram Bot 失败（请检查 BOT_TOKEN 与 TG_API_ENDPOINT）: %w", err)
 	}
 
+	// 配了 api_id/api_hash 就启用 MTProto 直连下载，大文件不再受官方 20MB 限制。
+	// 没配也不影响启动，只是退回老路径。
+	var mtp *tgfile.Client
+	if cfg.TGAPIID > 0 && cfg.TGAPIHash != "" {
+		mtp = tgfile.New(tgfile.Config{
+			AppID:       cfg.TGAPIID,
+			AppHash:     cfg.TGAPIHash,
+			BotToken:    cfg.BotToken,
+			SessionPath: cfg.MTProtoSession,
+			Logger:      log,
+		})
+		log.Info("已启用 MTProto 直连下载（大文件不再受官方 20MB 限制）")
+	} else {
+		log.Info("未配置 TG_API_ID/TG_API_HASH，大文件受官方 20MB 限制；" +
+			"超过 20MB 需要启用本地 Bot API 或配置 MTProto 凭据")
+	}
+
 	// 环境变量里预置了 OWNER_ID 就直接落库，省掉一次手动绑定。
 	// 没有预置也不影响使用：任何用户都能用，只是各自用自己的 115 账号。
 	if cfg.OwnerID > 0 && st.GetInt64(store.KeyBotOwnerID, 0) == 0 {
@@ -283,6 +305,7 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*App, error) {
 		st:        st,
 		api:       api,
 		log:       log,
+		mtproto:   mtp,
 		sessions:  newSessionManager(5 * time.Minute),
 		started:   time.Now(),
 		logins:    make(map[int64]*qrLoginState),

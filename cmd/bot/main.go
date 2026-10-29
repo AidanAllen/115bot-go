@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/AidanAllen/115bot-go/internal/config"
 	"github.com/AidanAllen/115bot-go/internal/p115"
 	"github.com/AidanAllen/115bot-go/internal/store"
+	"github.com/AidanAllen/115bot-go/internal/tgfile"
 )
 
 func main() {
@@ -26,9 +28,10 @@ func main() {
 
 func run() error {
 	var (
-		showVersion = flag.Bool("version", false, "打印版本并退出")
-		checkCookie = flag.Bool("check-cookie", false, "仅校验 115 cookie 登录态后退出（不启动机器人）")
-		cookieArg   = flag.String("cookie", "", "配合 --check-cookie 使用的 cookie 字符串；留空则读取数据库中的配置")
+		showVersion  = flag.Bool("version", false, "打印版本并退出")
+		checkCookie  = flag.Bool("check-cookie", false, "仅校验 115 cookie 登录态后退出（不启动机器人）")
+		cookieArg    = flag.String("cookie", "", "配合 --check-cookie 使用的 cookie 字符串；留空则读取数据库中的配置")
+		checkMTProto = flag.String("check-mtproto", "", "用 MTProto 下载指定 file_id 验证大文件通道后退出")
 	)
 	flag.Parse()
 
@@ -47,6 +50,10 @@ func run() error {
 	// CLI 模式：只验 cookie，方便部署前自查
 	if *checkCookie {
 		return runCheckCookie(cfg, *cookieArg, logger)
+	}
+	// CLI 模式：验证大文件下载链路是否通（不需要真跑机器人）
+	if strings.TrimSpace(*checkMTProto) != "" {
+		return runCheckMTProto(cfg, strings.TrimSpace(*checkMTProto), logger)
 	}
 
 	st, err := store.Open(cfg.DBPath)
@@ -86,6 +93,38 @@ func run() error {
 		return err
 	}
 	logger.Info("已优雅退出")
+	return nil
+}
+
+// runCheckMTProto 用 MTProto 真下一个文件，验证大文件通道。
+//
+// 有这个开关是因为：MTProto 这链路成不成，取决于凭据、出口网络、DC 连通性，
+// 光看编译通过不代表能下。用户拿一个 >20MB 文件的 file_id 跑一次就知道，
+// 不用先等机器人把文件转一遍（也用不着我拿到他的凭据）。
+func runCheckMTProto(cfg *config.Config, fileID string, logger *slog.Logger) error {
+	if cfg.TGAPIID <= 0 || cfg.TGAPIHash == "" {
+		return errors.New("未配置 TG_API_ID / TG_API_HASH，MTProto 未启用")
+	}
+	c := tgfile.New(tgfile.Config{
+		AppID:       cfg.TGAPIID,
+		AppHash:     cfg.TGAPIHash,
+		BotToken:    cfg.BotToken,
+		SessionPath: cfg.MTProtoSession,
+		Logger:      logger,
+	})
+	dst := filepath.Join(cfg.TempDir, fmt.Sprintf("mtproto_check_%d.bin", time.Now().UnixNano()))
+	// 大文件在慢链路上可能要很久，这里给足时间
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	start := time.Now()
+	n, err := c.Download(ctx, fileID, dst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(dst) }()
+	fmt.Printf("MTProto 下载成功：%d 字节（%.1f MB），用时 %s\n",
+		n, float64(n)/(1<<20), time.Since(start).Round(time.Millisecond))
 	return nil
 }
 

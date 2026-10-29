@@ -241,7 +241,7 @@ func (a *App) runTransfer(ctx context.Context, job transferJob) {
 		localPath = f.FilePath
 	} else {
 		a.notify(job, stateDownloading, "", "")
-		p, err := a.downloadTelegramFile(ctx, f, fileName)
+		p, err := a.downloadTelegramFile(ctx, f, fileName, size)
 		if err != nil {
 			if taskID > 0 {
 				_ = a.st.UpdateTask(taskID, store.StatusFailed, err.Error())
@@ -586,8 +586,68 @@ func (a *App) fileDirectURL(filePath string) string {
 	return fmt.Sprintf("%s/file/bot%s/%s", base, a.api.Token, trimLeadingSlash(filePath))
 }
 
-// downloadTelegramFile 从 Telegram 下载文件到临时目录。
-func (a *App) downloadTelegramFile(ctx context.Context, f tgbotapi.File, fileName string) (string, error) {
+// officialMaxFileBytes 是官方 Bot API 对 getFile 的硬上限（20MB），
+// 超了官方服务器会直接拒绝，不是我们代码能绕的。
+const officialMaxFileBytes = 20 << 20
+
+// downloadTelegramFile 把文件拉到本地临时目录，返回本地路径。
+//
+// 三条路，按代价从小到大排：
+//  1. 本地 Bot API 已经在磁盘上（Linux 容器方案）——根本不用下载，
+//     由调用方 resolveFile 判断，不进这里；
+//  2. 官方 HTTP 下载——零额外连接，但 20MB 封顶；
+//  3. MTProto 直连下载——需要 TG_API_ID/TG_API_HASH，能下任意大小。
+//
+// 所以：明确超过 20MB 的，官方那条路必然失败，直接走 MTProto，别浪费一趟往返；
+// 其余先走官方，失败了再拿 MTProto 兜一次。
+func (a *App) downloadTelegramFile(ctx context.Context, f tgbotapi.File, fileName string, size int64) (string, error) {
+	useMTProto := a.mtproto != nil && a.mtproto.Enabled()
+	if useMTProto && size > officialMaxFileBytes {
+		if p, err := a.mtprotoDownload(ctx, f.FileID, fileName); err != nil {
+			a.log.Warn("MTProto 下载失败，退回官方 Bot API", "err", err)
+		} else {
+			return p, nil
+		}
+	}
+
+	p, err := a.downloadViaHTTP(ctx, f, fileName)
+	if err == nil {
+		return p, nil
+	}
+	if !useMTProto {
+		return "", err
+	}
+	// 官方这条路失败的原因多半就是「文件太大」，再给 MTProto 一次机会。
+	// 仍然失败时返回的是官方那条路的错误：它更贴近用户的实际处境
+	//（比如没配 API_ID 时的提示就在那边）。
+	p2, err2 := a.mtprotoDownload(ctx, f.FileID, fileName)
+	if err2 == nil {
+		return p2, nil
+	}
+	a.log.Warn("MTProto 回退下载同样失败", "err", err2)
+	return "", err
+}
+
+// mtprotoDownload 用 MTProto 把 file_id 对应的文件下到临时目录。
+func (a *App) mtprotoDownload(ctx context.Context, fileID, fileName string) (string, error) {
+	if err := os.MkdirAll(a.cfg.TempDir, 0o755); err != nil {
+		return "", fmt.Errorf("创建临时目录失败: %w", err)
+	}
+	dst := filepath.Join(a.cfg.TempDir, fmt.Sprintf("%d_%s", time.Now().UnixNano(), fileName))
+	n, err := a.mtproto.Download(ctx, fileID, dst)
+	if err != nil {
+		return "", fmt.Errorf("MTProto 下载失败: %w", err)
+	}
+	// 与 HTTP 那条路保持一致：限制是全局的，不能因为换了通道就绕过
+	if a.cfg.MaxDownloadBytes > 0 && n > a.cfg.MaxDownloadBytes {
+		_ = os.Remove(dst)
+		return "", fmt.Errorf("文件超过大小限制 %s", humanSize(a.cfg.MaxDownloadBytes))
+	}
+	return dst, nil
+}
+
+// downloadViaHTTP 从 Telegram 下载文件到临时目录。
+func (a *App) downloadViaHTTP(ctx context.Context, f tgbotapi.File, fileName string) (string, error) {
 	url := a.fileDirectURL(f.FilePath)
 
 	if err := os.MkdirAll(a.cfg.TempDir, 0o755); err != nil {
