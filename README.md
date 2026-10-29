@@ -83,7 +83,7 @@ cp .env.example .env && vi .env          # 至少填 BOT_TOKEN
 make build && ./bin/115bot
 
 # 或交叉编译 Linux 二进制（服务器部署用）
-make VERSION=1.1.0 linux        # 产出 bin/115bot-linux-amd64
+make VERSION=1.2.0 linux        # 产出 bin/115bot-linux-amd64
 
 # 所有平台一次性构建（Release 就是这么打的包）
 make dist                       # = ./scripts/build-all.sh，产物在 bin/dist/
@@ -172,6 +172,23 @@ TG_API_HASH=0123456789abcdef0123456789abcdef
 > 需要代理的环境设 `ALL_PROXY` / `NO_PROXY`（SOCKS5，golang.org/x/net/proxy 语义）。
 > MTProto 会话（含 auth key）默认存在 `./data/tg.session.json`，属敏感数据。
 
+**与多用户 / 115 账号配置的关系**：两者完全正交，互不影响。
+
+| | `TG_API_ID` + `TG_API_HASH` | 115 账号配置 |
+|---|---|---|
+| 归属 | Telegram **应用**凭据 | 每个 TG 用户各自的 115 账号 |
+| 存放 | 环境变量，进程级只有一份 | SQLite `user_config` 表，按 `user_id` 分行 |
+| 内容 | 一对 id + hash | `account.cookie` / `account.ua` / `account.channel` / `account.offlineCid` / `account.transferCid` 等 |
+| 作用 | 仅用于大文件下载 | 登录 115、选转存目录、选上传通道 |
+
+MTProto 登录的身份是 **bot token**（`client.Auth().Bot`），不是某个 TG 用户，更不是 115 账号。
+所以它只负责「把 bot 能看到的文件取回来」，落到谁的网盘、用谁的 cookie 仍由该用户的
+`account.*` 决定——不会因为配了这组凭据就让多用户的 115 配置被覆盖或串号。
+
+唯一的交汇点是**并发**：下载器在进程里是全局单实例，且用互斥锁串行化（session 文件被并发
+读写会写坏）。所以多人同时转存大文件时，**下载这一步会排队**，前一个人的下完才轮到下一个；
+各自的 115 上传仍走各自 cookie，互不影响。可以接受就不用管。
+
 ### 5b. 备选：Windows 下跑本地 Bot API 容器（不配 MTProto 凭据时）
 
 `telegram-bot-api` 服务端只有 Linux 镜像，Windows 跑不了原生版，但可以用
@@ -214,10 +231,10 @@ Linux 下的「零拷贝直读」，多一次本机 HTTP 拷贝（回环速度�
 编译 → 上传 → 备份数据库 → 原子换二进制 → 重建容器 → **清理上一版遗留的镜像与临时文件**：
 
 ```bash
-./scripts/deploy.sh 1.1.0              # 等价于 make deploy VERSION=1.1.0
-SKIP_TESTS=1 ./scripts/deploy.sh 1.1.0 # 跳过 vet/test
-CLEAN_ONLY=1 ./scripts/deploy.sh 1.1.0 # 只清理旧镜像与残留，不重建
-TARGET_ARCH=arm64 ./scripts/deploy.sh 1.1.0   # 目标是 ARM 服务器
+./scripts/deploy.sh 1.2.0              # 等价于 make deploy VERSION=1.2.0
+SKIP_TESTS=1 ./scripts/deploy.sh 1.2.0 # 跳过 vet/test
+CLEAN_ONLY=1 ./scripts/deploy.sh 1.2.0 # 只清理旧镜像与残留，不重建
+TARGET_ARCH=arm64 ./scripts/deploy.sh 1.2.0   # 目标是 ARM 服务器
 ```
 
 清理范围**只针对本项目**（按「悬空 + 入口 `/app/115bot`」识别），不会误删其他应用的镜像。
@@ -274,9 +291,13 @@ compose 里写的是 `aiogram/telegram-bot-api:10.3`，不是 `latest`，原因�
 | `OWNER_ID` | | 所有者 id（仅归属标记，不限制使用），留空则首个 `/setid` 生效 |
 | `TG_API_ENDPOINT` | | 本地 Bot API 端点（Linux 容器方案），见下 |
 | `TG_API_ID` + `TG_API_HASH` | | **大文件（>20MB）推荐**：MTProto 直连下载，不需要 Docker，Windows exe 同样有效 |
+| `TG_MTPROTO_SESSION` | | MTProto 会话落盘位置，默认 `./data/tg.session.json`（含 auth key，敏感） |
 
 > 从 v0.2.0 起，115 凭据（cookie / UA / 通道 / 目录）**按用户存数据库**，环境变量只作兜底。
 > 多用户部署时 `TRANSFER_CID` / `OFFLINE_CID` / `DEFAULT_UA` 请留空。
+
+> `TG_API_ID` / `TG_API_HASH` 是 Telegram **应用级**凭据，全局只有一份，与每个用户各自的
+> 115 账号配置互不影响（详见第 5 节末尾的对照表）；不配置则行为与旧版完全一致。
 
 ## 架构
 
@@ -328,6 +349,8 @@ done
   突破办法有二选一：配置 `TG_API_ID` + `TG_API_HASH` 走内置 MTProto 下载（推荐，
   跨平台、无需 Docker），或部署本地 Bot API 服务（只有 Linux 容器镜像，
   Windows 上要靠 Docker Desktop 跑，见 5b）。两者都不做就仍受 20MB 限制
+- **大文件下载是全局串行**：MTProto 下载器单实例 + session 文件不能并发写，
+  多人同时转存 >20MB 时下载阶段会排队（上传仍各自进行）。详见第 5 节
 - 上传走 115 网页通道，不支持分片：115 回调校验的 `${sha1}` 在分片模式拿不到整体值，合并会报 `errno=10002`
 - 上传吞吐受部署机器上行带宽限制，跨境部署时较慢（实测日本 → 阿里云深圳丢包约 15%，
   真实上传约 30KB/s；命中 115 秒传时是秒级完成）。大文件建议优先用离线下载
