@@ -70,14 +70,54 @@ make build && ./bin/115bot
 make linux          # 产出 bin/115bot-linux-amd64
 ```
 
+### 支持的平台
+
+项目是纯 Go 实现（SQLite 用 `modernc.org/sqlite`，不依赖 cgo），
+所以每个平台都能静态编译出一个**单文件、零依赖**的可执行程序，拷过去直接跑：
+
+| 平台 | 产物 | 典型设备 |
+|---|---|---|
+| Linux x86_64 | `115bot-linux-amd64` | 云服务器（默认部署目标） |
+| Linux ARM64 | `115bot-linux-arm64` | ARM 服务器、NAS、Oracle ARM 实例 |
+| Linux ARMv7 | `115bot-linux-armv7` | 树莓派 2/3/4 等 32 位 ARM |
+| Windows x64 | `115bot-windows-amd64.exe` | 日常 Windows 机器 |
+| Windows ARM64 | `115bot-windows-arm64.exe` | Surface / ARM 笔记本 |
+| macOS Intel | `115bot-darwin-amd64` | |
+| macOS Apple Silicon | `115bot-darwin-arm64` | |
+
+一次性出全部平台（Release 就是这么打的包）：
+
+```bash
+./scripts/build-all.sh          # 或 make dist；产物在 bin/dist/，附 SHA256SUMS.txt
+PLATFORMS="linux/amd64 linux/arm64" ./scripts/build-all.sh   # 只要其中几个
+```
+
+Windows 上直接跑：
+
+```bat
+copy .env.example .env
+rem 编辑 .env 填入 BOT_TOKEN
+115bot-windows-amd64.exe
+```
+
+> Windows 下优雅退出只响应 Ctrl+C（Windows 没有 Unix 的 SIGTERM 语义）；
+> Linux 下 `docker stop` / systemd 发的 SIGTERM 同样会优雅退出。
+> 本地 Bot API（`telegram-bot-api`）只有 Linux 容器方案，Windows 直连时仍受官方 20MB 限制。
+
+ARM 机器用 Docker：
+
+```bash
+BIN_NAME=115bot-linux-arm64 docker compose up -d --build     # 32 位用 -armv7
+```
+
 ### 3. Docker 部署
 
 ```bash
 # 把 docker-compose.yml、Dockerfile.runtime、.dockerignore、
 # bin/115bot-linux-amd64、.env 放到同一目录后：
-mkdir -p data && chown -R 10001:10001 data
+mkdir -p data tgdata && chown -R 101:101 data tgdata
 chmod 600 .env
-docker compose up -d --build
+docker compose up -d --build      # 需要 >20MB 大文件：加 --profile localapi
 ```
 
 验证：
@@ -136,6 +176,15 @@ make vet      # 静态检查
 make test     # 单元测试
 make build    # 本机构建
 make linux    # 交叉编译 Linux amd64
+make dist     # 所有平台一次性构建（= ./scripts/build-all.sh）
+```
+
+改动跨平台相关代码后，务必确认每个 GOOS 都能编过（CI 里 `cross-build` job 会做）：
+
+```bash
+for t in linux/amd64 linux/arm64 windows/amd64 darwin/arm64; do
+  CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./...
+done
 ```
 
 ## 已知限制

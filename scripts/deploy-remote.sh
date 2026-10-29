@@ -4,12 +4,16 @@
 # 由本机 scripts/deploy.sh 上传后调用，也可以单独执行：
 #   VERSION=0.2.4 sh /home/docker/docker-compose/hi_115bot/scripts/deploy-remote.sh
 #   CLEAN_ONLY=1 sh /home/docker/docker-compose/hi_115bot/scripts/deploy-remote.sh   # 只清理，不重建
+#
+# BIN_NAME 指定二进制文件名（多平台构建后名字带 os/arch）：
+#   BIN_NAME=115bot-linux-arm64 VERSION=1.1.0 sh .../deploy-remote.sh
 set -e
 
 DIR="${DEPLOY_DIR:-/home/docker/docker-compose/hi_115bot}"
 VERSION="${VERSION:-dev}"
 CLEAN_ONLY="${CLEAN_ONLY:-0}"
 KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
+BIN_NAME="${BIN_NAME:-115bot-linux-amd64}"
 
 cd "$DIR"
 
@@ -39,12 +43,12 @@ if [ "$CLEAN_ONLY" = "1" ]; then
   echo "== CLEAN_ONLY=1：跳过换二进制与重建 =="
 else
   # 3) 换入新二进制
-  if [ -f bin/115bot-linux-amd64.new ]; then
-    mv -f bin/115bot-linux-amd64.new bin/115bot-linux-amd64
-    chmod +x bin/115bot-linux-amd64
-    echo "[3/6] 已换入新二进制"
+  if [ -f "bin/$BIN_NAME.new" ]; then
+    mv -f "bin/$BIN_NAME.new" "bin/$BIN_NAME"
+    chmod +x "bin/$BIN_NAME"
+    echo "[3/6] 已换入新二进制 ($BIN_NAME)"
   else
-    echo "[3/6] 未发现 bin/115bot-linux-amd64.new，沿用现有二进制"
+    echo "[3/6] 未发现 bin/$BIN_NAME.new，沿用现有二进制"
   fi
 
   # 4) 记录当前镜像，重建后再删它

@@ -8,8 +8,8 @@
 //
 // 用法：
 //
-//	115check -account /tmp/115-account.json
-//	115check -account /tmp/115-account.json -write-test
+//	115check -account <系统临时目录>/115-account.json
+//	115check -account <系统临时目录>/115-account.json -write-test
 package main
 
 import (
@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/AidanAllen/115bot-go/internal/p115"
@@ -53,7 +54,8 @@ func check(ok bool, format string, args ...any) bool {
 }
 
 func main() {
-	account := flag.String("account", "/tmp/115-account.json", "账号文件路径")
+	// 默认落在系统临时目录：Windows 没有 /tmp，硬写会直接创建失败
+	account := flag.String("account", filepath.Join(os.TempDir(), "115-account.json"), "账号文件路径")
 	pages := flag.Int("pages", 1, "拉取多少页离线任务用于校验")
 	timeout := flag.Duration("timeout", 25*time.Second, "单次请求超时")
 	writeTest := flag.Bool("write-test", false, "额外执行可逆写测试（下发→确认→删除）")

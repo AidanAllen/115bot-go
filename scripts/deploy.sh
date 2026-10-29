@@ -25,6 +25,14 @@ REMOTE_DIR="${REMOTE_DIR:-/home/docker/docker-compose/hi_115bot}"
 RSH="$ROOT/rsh.sh"
 CLEAN_ONLY="${CLEAN_ONLY:-0}"
 
+# 目标平台（服务器架构不是 x86_64 时改这两个）：
+#   TARGET_ARCH=arm64 ./scripts/deploy.sh 1.1.0
+TARGET_OS="${TARGET_OS:-linux}"
+TARGET_ARCH="${TARGET_ARCH:-amd64}"
+BIN_NAME="115bot-$TARGET_OS-$TARGET_ARCH"
+[ "$TARGET_ARCH" = "arm" ] && BIN_NAME="115bot-$TARGET_OS-armv7"
+[ "$TARGET_OS" = "windows" ] && BIN_NAME="$BIN_NAME.exe"
+
 # 本机没有系统 Go，用仓库内的离线工具链
 export PATH="$ROOT/tools/go/bin:$PATH" \
        GOFLAGS=-mod=mod \
@@ -46,20 +54,23 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   go test ./... -count=1
 fi
 
-# 2) 交叉编译 Linux 二进制
+# 2) 交叉编译目标平台二进制
 #
 # 不用 make：本机（Git Bash）没有 make，直接调 go 更稳。
 # 版本号通过 ldflags 注入，/v 与启动日志里看到的就是它。
-echo "== 编译 v$VERSION =="
+# 全平台产物（含 Windows / ARM）用 ./scripts/build-all.sh。
+echo "== 编译 v$VERSION ($TARGET_OS/$TARGET_ARCH) =="
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+GOARM=""
+[ "$TARGET_ARCH" = "arm" ] && GOARM="7"
+CGO_ENABLED=0 GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" GOARM="$GOARM" go build \
   -ldflags "-s -w -X github.com/AidanAllen/115bot-go/internal/bot.Version=$VERSION -X github.com/AidanAllen/115bot-go/internal/bot.BuildTime=$BUILD_TIME" \
-  -o bin/115bot-linux-amd64 ./cmd/bot
-ls -lh bin/115bot-linux-amd64
+  -o "bin/$BIN_NAME" ./cmd/bot
+ls -lh "bin/$BIN_NAME"
 
 # 3) 上传二进制（先落 .new，由服务器脚本原子替换）
-upload "$APP/bin/115bot-linux-amd64" "$REMOTE_DIR/bin/115bot-linux-amd64.new"
-"$RSH" "chmod +x '$REMOTE_DIR/bin/115bot-linux-amd64.new'"
+upload "$APP/bin/$BIN_NAME" "$REMOTE_DIR/bin/$BIN_NAME.new"
+"$RSH" "chmod +x '$REMOTE_DIR/bin/$BIN_NAME.new'"
 
 # 4) 上传编排文件与服务器端脚本
 upload "$APP/docker-compose.yml"     "$REMOTE_DIR/docker-compose.yml"
@@ -70,6 +81,6 @@ upload "$HERE/deploy-remote.sh"      "$REMOTE_DIR/scripts/deploy-remote.sh"
 
 # 5) 远端执行：备份 -> 换二进制 -> 重建 -> 清遗留
 echo "== 服务器端执行 =="
-"$RSH" "VERSION=$VERSION CLEAN_ONLY=$CLEAN_ONLY '$REMOTE_DIR/scripts/deploy-remote.sh'"
+"$RSH" "VERSION=$VERSION CLEAN_ONLY=$CLEAN_ONLY BIN_NAME=$BIN_NAME '$REMOTE_DIR/scripts/deploy-remote.sh'"
 
 echo "== 部署结束：v$VERSION =="

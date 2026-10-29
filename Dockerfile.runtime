@@ -10,7 +10,11 @@ RUN apk add --no-cache ca-certificates tzdata \
     && echo "Asia/Shanghai" > /etc/timezone
 
 WORKDIR /app
-COPY bin/115bot-linux-amd64 /app/115bot
+
+# 二进制文件名带平台后缀（build-all.sh 的产物）。换平台时在 compose 里传 build arg：
+#   BIN_NAME=115bot-linux-arm64 docker compose up -d --build
+ARG BIN_NAME=115bot-linux-amd64
+COPY bin/${BIN_NAME} /app/115bot
 RUN chmod +x /app/115bot
 
 # 数据与临时目录通过卷挂载，保证容器重建不丢配置

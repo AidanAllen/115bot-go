@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要构建的 tag（例 v1.1.0）
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            goos: linux
+            goarch: amd64
+            arm: ""
+          - name: linux-arm64
+            goos: linux
+            goarch: arm64
+            arm: ""
+          - name: linux-armv7
+            goos: linux
+            goarch: arm
+            arm: "7"
+          - name: windows-amd64
+            goos: windows
+            goarch: amd64
+            arm: ""
+          - name: windows-arm64
+            goos: windows
+            goarch: arm64
+            arm: ""
+          - name: darwin-amd64
+            goos: darwin
+            goarch: amd64
+            arm: ""
+          - name: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            arm: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Resolve version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.arm }}
+        run: |
+          set -euo pipefail
+          EXT=""
+          [ "${{ matrix.goos }}" = "windows" ] && EXT=".exe"
+          OUT="115bot-${{ matrix.name }}$EXT"
+          go build -trimpath \
+            -ldflags "-s -w \
+              -X github.com/AidanAllen/115bot-go/internal/bot.Version=${{ steps.ver.outputs.version }} \
+              -X github.com/AidanAllen/115bot-go/internal/bot.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o "$OUT" ./cmd/bot
+          sha256sum "$OUT" > "$OUT.sha256"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" "$OUT" "$OUT.sha256" --clobber

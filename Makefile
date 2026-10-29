@@ -1,12 +1,12 @@
 APP        := 115bot
 PKG        := github.com/AidanAllen/115bot-go
-VERSION    ?= 0.1.0
+VERSION    ?= 1.1.0
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS    := -s -w \
 	-X $(PKG)/internal/bot.Version=$(VERSION) \
 	-X $(PKG)/internal/bot.BuildTime=$(BUILD_TIME)
 
-.PHONY: all build linux test vet fmt clean run check-cookie deploy
+.PHONY: all build linux test vet fmt clean run check-cookie dist deploy
 
 all: vet test build
 
@@ -17,6 +17,11 @@ build:
 linux:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/$(APP)-linux-amd64 ./cmd/bot
 	@ls -lh bin/$(APP)-linux-amd64
+
+# 全部受支持平台的一次性产物（Release 用），等同 ./scripts/build-all.sh
+# 矩阵改 PLATFORMS 变量即可，例：make dist PLATFORMS="linux/amd64 linux/arm64"
+dist:
+	@VERSION=$(VERSION) PLATFORMS="$(PLATFORMS)" ./scripts/build-all.sh
 
 vet:
 	go vet ./...

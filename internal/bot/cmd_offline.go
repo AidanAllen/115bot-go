@@ -556,7 +556,9 @@ func (a *App) resolveFile(fileID string) (f tgbotapi.File, local bool, err error
 	}
 
 	// 本地 Bot API 直接给绝对路径；官方 API 给的是相对路径（photos/file_1.jpg 这种）。
-	if filepath.IsAbs(f.FilePath) {
+	// 用 isAbsPath 而不是 filepath.IsAbs：本地 API 给的是 POSIX 路径，
+	// 在 Windows 上跑 bot 时 filepath.IsAbs 认不出来（详见 pathutil.go）。
+	if isAbsPath(f.FilePath) {
 		st, serr := os.Stat(f.FilePath)
 		if serr == nil && st.Mode().IsRegular() {
 			if a.cfg.MaxDownloadBytes > 0 && st.Size() > a.cfg.MaxDownloadBytes {
@@ -581,7 +583,7 @@ func (a *App) fileDirectURL(filePath string) string {
 		base = "https://api.telegram.org"
 	}
 	// --local 模式给的是绝对路径，去掉前导斜杠避免拼出双斜杠
-	return fmt.Sprintf("%s/file/bot%s/%s", base, a.api.Token, strings.TrimPrefix(filePath, "/"))
+	return fmt.Sprintf("%s/file/bot%s/%s", base, a.api.Token, trimLeadingSlash(filePath))
 }
 
 // downloadTelegramFile 从 Telegram 下载文件到临时目录。

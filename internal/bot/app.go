@@ -19,7 +19,7 @@ import (
 )
 
 // Version 由构建时通过 -ldflags 注入。
-var Version = "1.0.0"
+var Version = "1.1.0"
 
 // BuildTime 构建时间，同样由 -ldflags 注入。
 var BuildTime = "unknown"

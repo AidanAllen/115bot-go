@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/AidanAllen/115bot-go/internal/bot"
@@ -61,7 +60,9 @@ func run() error {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// 信号按平台分开：Unix 接 SIGTERM（docker stop），Windows 只有 Ctrl+C。
+	// 见同目录 signals_unix.go / signals_windows.go。
+	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals()...)
 	defer stop()
 
 	// 多用户模型下，115 凭据不再是全局的：这里报告的是 owner 视角与已接入的用户数。
