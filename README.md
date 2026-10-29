@@ -3,6 +3,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.23.4-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![CI](https://github.com/AidanAllen/115bot-go/actions/workflows/ci.yml/badge.svg)](https://github.com/AidanAllen/115bot-go/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AidanAllen/115bot-go?style=flat-square)](https://github.com/AidanAllen/115bot-go/releases)
 
 115 网盘自动化 Telegram 机器人（Go 版）。把 Telegram 里的视频、文件、磁力链一键转存到你的 115 网盘。
 
@@ -60,14 +61,32 @@
 - 在 [@BotFather](https://t.me/BotFather) 创建 bot，拿到 `BOT_TOKEN`
 - 复制配置模板：`cp .env.example .env`，填入 token
 
-### 2. 构建与运行
+### 2. 直接下载二进制（不想编译就走这条）
+
+[Releases](https://github.com/AidanAllen/115bot-go/releases) 里有每个平台的预编译二进制，
+下载对应那个、加执行权限、配好 `.env` 就能跑：
+
+```bash
+# Linux x86_64 为例；其他平台换文件名（见下表）
+wget https://github.com/AidanAllen/115bot-go/releases/latest/download/115bot-linux-amd64
+chmod +x 115bot-linux-amd64
+cp .env.example .env && vi .env          # 至少填 BOT_TOKEN
+./115bot-linux-amd64
+```
+
+下载后可校验：`sha256sum -c 115bot-linux-amd64.sha256`（同名的 `.sha256` 文件一起下）。
+
+### 3. 构建与运行
 
 ```bash
 # 本机直接跑
 make build && ./bin/115bot
 
 # 或交叉编译 Linux 二进制（服务器部署用）
-make linux          # 产出 bin/115bot-linux-amd64
+make VERSION=1.1.0 linux        # 产出 bin/115bot-linux-amd64
+
+# 所有平台一次性构建（Release 就是这么打的包）
+make dist                       # = ./scripts/build-all.sh，产物在 bin/dist/
 ```
 
 ### 支持的平台
@@ -110,7 +129,7 @@ ARM 机器用 Docker：
 BIN_NAME=115bot-linux-arm64 docker compose up -d --build     # 32 位用 -armv7
 ```
 
-### 3. Docker 部署
+### 4. Docker 部署
 
 ```bash
 # 把 docker-compose.yml、Dockerfile.runtime、.dockerignore、
@@ -127,6 +146,22 @@ docker compose logs -f                                   # 看到「机器人已
 docker run --rm --env-file .env -v "$PWD/data:/app/data" \
   hi_115bot:latest --check-cookie                        # 校验 115 登录态
 ```
+
+### 5. 升级（一键部署脚本）
+
+已经在服务器上跑起来的，用仓库里的脚本更新最省事——它会
+编译 → 上传 → 备份数据库 → 原子换二进制 → 重建容器 → **清理上一版遗留的镜像与临时文件**：
+
+```bash
+./scripts/deploy.sh 1.1.0              # 等价于 make deploy VERSION=1.1.0
+SKIP_TESTS=1 ./scripts/deploy.sh 1.1.0 # 跳过 vet/test
+CLEAN_ONLY=1 ./scripts/deploy.sh 1.1.0 # 只清理旧镜像与残留，不重建
+TARGET_ARCH=arm64 ./scripts/deploy.sh 1.1.0   # 目标是 ARM 服务器
+```
+
+清理范围**只针对本项目**（按「悬空 + 入口 `/app/115bot`」识别），不会误删其他应用的镜像。
+
+> 重建容器会中断进行中的转存任务，大文件转存期间别发版。
 
 ## 命令速查
 
@@ -162,12 +197,26 @@ docker run --rm --env-file .env -v "$PWD/data:/app/data" \
 
 ```
 cmd/bot           进程入口、配置加载、优雅退出
+                  （signals_unix.go / signals_windows.go 按平台接退出信号）
 internal/config   环境变量加载与启动校验
-internal/store    SQLite 持久化（配置表 + 任务表）
-internal/p115     115 适配层（登录 / 目录 / 离线 / 上传）
+internal/store    SQLite 持久化（app_config / user_config / task）
+internal/p115     115 适配层（登录 / 目录 / 离线 / 上传 / 转存通道）
 internal/bot      Telegram 层（命令 / 路由 / 菜单 / 状态机）
-scripts           部署脚本 + 本地冒烟测试
+                  pathutil.go     跨平台路径判断（本地 Bot API 给的是 POSIX 绝对路径）
+                  mediagroup.go   相册缓冲与共享说明命名
+                  app.go          转存队列 / 批量进度消息
+scripts           deploy.sh（一键部署+清理）、deploy-remote.sh（服务器端）、
+                  build-all.sh（多平台构建）、smoke_bot.py（本地冒烟）
+.github/workflows ci.yml（测试 + 7 平台交叉编译校验）、
+                  release.yml（push tag 后自动构建并上传 Release 产物）
 ```
+
+跨平台相关的三条约定（改动时留意）：
+
+- 判断本地 Bot API 给的路径必须用 `internal/bot` 的 `isAbsPath`，
+  不能直接 `filepath.IsAbs`（后者按运行平台判断，Windows 上会把 POSIX 绝对路径认成相对路径）
+- 退出信号写在 `cmd/bot/signals_<平台>.go`，不要在 `main.go` 里写死 `syscall.SIGTERM`
+- 临时目录、账号文件一类路径用 `os.TempDir()`，不要硬写 `/tmp`
 
 ## 开发
 
@@ -189,9 +238,14 @@ done
 
 ## 已知限制
 
-- 上传走 115 网页通道，>5GB 文件因 115 回调校验限制不支持分片，会明确报错
-- 上传吞吐受部署机器上行带宽限制，跨境部署时较慢（建议大文件优先用离线下载）
+- **20MB 门槛**：官方 Bot API 限制 `getFile` 20MB、上传 50MB。要收发更大的文件
+  必须启用本地 Bot API（`--profile localapi` + `TG_API_ENDPOINT`），**只有 Linux 容器方案**，
+  Windows / macOS 直连时仍受该限制
+- 上传走 115 网页通道，不支持分片：115 回调校验的 `${sha1}` 在分片模式拿不到整体值，合并会报 `errno=10002`
+- 上传吞吐受部署机器上行带宽限制，跨境部署时较慢（实测日本 → 阿里云深圳丢包约 15%，
+  真实上传约 30KB/s；命中 115 秒传时是秒级完成）。大文件建议优先用离线下载
 - 离线任务提交为同步方式，大批量链接（>50 条）会较慢
+- 重建容器会中断进行中的转存任务，大文件转存期间别发版
 
 ## License
 
