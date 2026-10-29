@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ghs/115bot-go/internal/config"
-	"github.com/ghs/115bot-go/internal/p115"
-	"github.com/ghs/115bot-go/internal/store"
+	"github.com/AidanAllen/115bot-go/internal/config"
+	"github.com/AidanAllen/115bot-go/internal/p115"
+	"github.com/AidanAllen/115bot-go/internal/store"
 )
 
 // newUserTestApp 造一个只带存储与配置的 App（不发消息，只验证数据归属）。

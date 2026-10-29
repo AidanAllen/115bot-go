@@ -53,7 +53,7 @@ fi
 echo "== 编译 v$VERSION =="
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-  -ldflags "-s -w -X github.com/ghs/115bot-go/internal/bot.Version=$VERSION -X github.com/ghs/115bot-go/internal/bot.BuildTime=$BUILD_TIME" \
+  -ldflags "-s -w -X github.com/AidanAllen/115bot-go/internal/bot.Version=$VERSION -X github.com/AidanAllen/115bot-go/internal/bot.BuildTime=$BUILD_TIME" \
   -o bin/115bot-linux-amd64 ./cmd/bot
 ls -lh bin/115bot-linux-amd64
 

@@ -1,4 +1,4 @@
-module github.com/ghs/115bot-go
+module github.com/AidanAllen/115bot-go
 
 go 1.23.4
 

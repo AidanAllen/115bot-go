@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ghs/115bot-go/internal/bot"
-	"github.com/ghs/115bot-go/internal/config"
-	"github.com/ghs/115bot-go/internal/p115"
-	"github.com/ghs/115bot-go/internal/store"
+	"github.com/AidanAllen/115bot-go/internal/bot"
+	"github.com/AidanAllen/115bot-go/internal/config"
+	"github.com/AidanAllen/115bot-go/internal/p115"
+	"github.com/AidanAllen/115bot-go/internal/store"
 )
 
 func main() {

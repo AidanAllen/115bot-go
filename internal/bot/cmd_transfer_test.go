@@ -6,8 +6,8 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"github.com/ghs/115bot-go/internal/config"
-	"github.com/ghs/115bot-go/internal/p115"
+	"github.com/AidanAllen/115bot-go/internal/config"
+	"github.com/AidanAllen/115bot-go/internal/p115"
 )
 
 // TestPickMedia 覆盖各类媒体消息的识别，确保 /d 能拿到正确的 file_id 与文件名。

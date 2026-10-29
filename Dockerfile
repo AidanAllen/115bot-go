@@ -14,8 +14,8 @@ ARG BUILD_TIME=unknown
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags "-s -w \
-      -X github.com/ghs/115bot-go/internal/bot.Version=${VERSION} \
-      -X github.com/ghs/115bot-go/internal/bot.BuildTime=${BUILD_TIME}" \
+      -X github.com/AidanAllen/115bot-go/internal/bot.Version=${VERSION} \
+      -X github.com/AidanAllen/115bot-go/internal/bot.BuildTime=${BUILD_TIME}" \
     -o /out/115bot ./cmd/bot
 
 # ---- 运行镜像 ----

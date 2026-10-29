@@ -1,5 +1,5 @@
 APP        := 115bot
-PKG        := github.com/ghs/115bot-go
+PKG        := github.com/AidanAllen/115bot-go
 VERSION    ?= 0.1.0
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS    := -s -w \

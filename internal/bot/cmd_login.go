@@ -10,8 +10,8 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"github.com/ghs/115bot-go/internal/p115"
-	"github.com/ghs/115bot-go/internal/store"
+	"github.com/AidanAllen/115bot-go/internal/p115"
+	"github.com/AidanAllen/115bot-go/internal/store"
 )
 
 const (

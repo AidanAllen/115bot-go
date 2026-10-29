@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ghs/115bot-go/internal/p115"
+	"github.com/AidanAllen/115bot-go/internal/p115"
 )
 
 // constStringValues 解析文件里所有字符串常量，返回 常量名 -> 值。

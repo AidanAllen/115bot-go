@@ -3,7 +3,7 @@ package bot
 import (
 	"testing"
 
-	"github.com/ghs/115bot-go/internal/store"
+	"github.com/AidanAllen/115bot-go/internal/store"
 )
 
 // TestDirCallbackRoundTrip 浏览器按钮生成的回调必须能被自己解析回来，

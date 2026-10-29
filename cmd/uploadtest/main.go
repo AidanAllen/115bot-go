@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ghs/115bot-go/internal/p115"
+	"github.com/AidanAllen/115bot-go/internal/p115"
 )
 
 // accountFile 与 qrlogin 输出的账号文件结构一致。

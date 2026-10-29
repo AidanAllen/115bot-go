@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ghs/115bot-go/internal/p115"
+	"github.com/AidanAllen/115bot-go/internal/p115"
 )
 
 // Config 保存运行期全部配置。所有字段均来自环境变量，启动时一次性校验，

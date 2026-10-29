@@ -8,8 +8,8 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"github.com/ghs/115bot-go/internal/p115"
-	"github.com/ghs/115bot-go/internal/store"
+	"github.com/AidanAllen/115bot-go/internal/p115"
+	"github.com/AidanAllen/115bot-go/internal/store"
 )
 
 // cmdMenu 输出 115 设置菜单（内容按发起者自己的账号渲染）。

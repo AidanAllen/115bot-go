@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ghs/115bot-go/internal/config"
-	"github.com/ghs/115bot-go/internal/store"
+	"github.com/AidanAllen/115bot-go/internal/config"
+	"github.com/AidanAllen/115bot-go/internal/store"
 )
 
 // cmdID 返回调用者的 Telegram id 与当前会话 id。

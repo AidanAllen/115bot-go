@@ -15,8 +15,8 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"github.com/ghs/115bot-go/internal/p115"
-	"github.com/ghs/115bot-go/internal/store"
+	"github.com/AidanAllen/115bot-go/internal/p115"
+	"github.com/AidanAllen/115bot-go/internal/store"
 )
 
 // handleAutoLinks 自动识别消息中的磁力链 / ed2k 并下发到**发起者自己**的 115。
