@@ -137,7 +137,7 @@ BIN_NAME=115bot-linux-arm64 docker compose up -d --build     # 32 位用 -armv7
 # bin/115bot-linux-amd64、.env 放到同一目录后：
 mkdir -p data tgdata && chown -R 101:101 data tgdata
 chmod 600 .env
-docker compose up -d --build      # 需要 >20MB 大文件：加 --profile localapi
+docker compose up -d --build      # 需要 >20MB 大文件：在 .env 配 TG_API_ID/TG_API_HASH（见第 5 节）
 ```
 
 验证：
@@ -150,7 +150,8 @@ docker run --rm --env-file .env -v "$PWD/data:/app/data" \
 
 ### 5. 突破 20MB：内置 MTProto 下载（推荐）
 
-配好 `TG_API_ID` + `TG_API_HASH` 即可，**不需要 Docker，Windows 跑 exe 也有效**：
+配好 `TG_API_ID` + `TG_API_HASH` 即可，**不需要 Docker，Windows 跑 exe 也有效**——
+也就是说不用再起 `telegram-bot-api` 容器（compose 里那个是 `localapi` profile，默认不起）：
 
 ```env
 TG_API_ID=12345678
@@ -189,9 +190,23 @@ MTProto 登录的身份是 **bot token**（`client.Auth().Bot`），不是某个
 读写会写坏）。所以多人同时转存大文件时，**下载这一步会排队**，前一个人的下完才轮到下一个；
 各自的 115 上传仍走各自 cookie，互不影响。可以接受就不用管。
 
-### 5b. 备选：Windows 下跑本地 Bot API 容器（不配 MTProto 凭据时）
+### 5b. 可选（v1.2.0 起已非必需）：本地 Bot API 容器
 
-`telegram-bot-api` 服务端只有 Linux 镜像，Windows 跑不了原生版，但可以用
+> **新部署不需要这一节。** v1.2.0 起内置 MTProto 下载已经覆盖「突破 20MB」这个需求，
+> 而且跨平台、不用 Docker。下面只写给已经在跑这个容器、或确实想保留它的人。
+
+保留它还有两点独占价值，但都不是刚需：
+
+- `--local` 模式下文件落在 `tgdata` 卷里，bot 直接读盘，**省一次「TG DC → 本机」的下载**
+  （只有 bot 收到过、且被 `tgdata` 缓存住的文件才有这个待遇）；
+- 上传侧支持 2000MB —— 但本 bot 只往 115 传文件，不发文件回 Telegram，**用不上**。
+
+代价：必须 Docker；两个容器的 uid 与卷路径要严格对齐；`tgdata` 持续增长要清理；镜像会漂。
+两边**都需要** `api_id` / `api_hash`，凭据成本是一样的。
+
+同时启用时下载优先级为 **本地直读 > MTProto > 官方 HTTP**，MTProto 实际只当备胎。
+
+`telegram-bot-api` 服务端只有 Linux 镜像，Windows 跑不了原生版，要用只能靠
 Docker Desktop（WSL2 后端）单独起这一个容器，exe 走 HTTP 用它：
 
 ```powershell

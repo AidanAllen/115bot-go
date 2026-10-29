@@ -13,8 +13,11 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    # 必须与 telegram-bot-api 同 uid（镜像里 telegram-bot-api 用户是 101），
+    # 下面两处（uid 101 + tgdata 卷）**只为配合 telegram-bot-api 服务**：
+    # 必须与它同 uid（镜像里 telegram-bot-api 用户是 101），
     # 否则读不到它落盘的文件、也删不掉用完的缓存（目录是 750）。
+    # 不启用 localapi 的话它们可以去掉，但宿主 data/ 的属主得跟着改回
+    # （之前为配合它做过 chown -R 101:101 data/ tgdata/）。
     user: "101:101"
     volumes:
       - ./data:/app/data
@@ -31,12 +34,22 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # 可选：Telegram 本地 Bot API 服务
+  # 可选（v1.2.0 起已非必需）：Telegram 本地 Bot API 服务
   #
-  # 启用后收发文件不再受官方 20MB 限制（下载无限制、上传 2000MB），
-  # 且 --local 模式下文件已经落在 tgdata 卷里，bot 直接读盘上传，连下载都省了。
-  # 启用：把 .env 里的 TG_API_ENDPOINT 指向下面地址，再
+  # v1.2.0 起内置了 MTProto 下载（internal/tgfile），只需 TG_API_ID + TG_API_HASH
+  # 就能下任意大小的文件，不需要 Docker、跨平台一致。所以**新部署不必再起这个容器**。
+  #
+  # 它的独占价值只剩两点，都不是刚需：
+  #   1. --local 模式下文件落在 tgdata 卷里，bot 直接读盘，省一次「TG DC → 本机」的下载
+  #      （注意：只有 bot 收到过、且被 tgdata 缓存住的文件才有这个待遇）；
+  #   2. 上传侧支持 2000MB —— 本 bot 只往 115 传，不发文件回 Telegram，用不上。
+  #
+  # 代价却不少：必须 Docker；两个容器 uid 与卷路径要严格对齐（见 hi_115bot 的
+  # user/volumes 注释）；tgdata 会持续增长要清理；镜像还可能漂（下面钉了 10.3）。
+  #
+  # 仍然想启用：把 .env 里的 TG_API_ENDPOINT 指向下面的地址，再
   #   docker compose --profile localapi up -d
+  # 启用后下载优先级是「本地直读 > MTProto > 官方 HTTP」，MTProto 实际只当备胎。
   telegram-bot-api:
     # 固定 Bot API 版本，不要用 latest：
     #   latest 每次被重建都可能换掉 tdlib（Hub 上同一个 10.3 都重建过多次，
