@@ -97,7 +97,7 @@ rem 编辑 .env 填入 BOT_TOKEN
 make build && ./bin/115bot
 
 # 或交叉编译 Linux 二进制（服务器部署用）
-make VERSION=1.0.2 linux        # 产出 bin/115bot-linux-amd64
+make VERSION=1.0.3 linux        # 产出 bin/115bot-linux-amd64
 
 # 所有平台一次性构建（Release 就是这么打的包）
 make dist                       # = ./scripts/build-all.sh，产物在 bin/dist/
@@ -211,10 +211,10 @@ docker run --rm --env-file .env -v "$PWD/data:/app/data" \
 编译 → 上传 → 备份数据库 → 原子换二进制 → 重建容器 → **清理上一版遗留的镜像与临时文件**：
 
 ```bash
-./scripts/deploy.sh 1.0.2              # 等价于 make deploy VERSION=1.0.2
-SKIP_TESTS=1 ./scripts/deploy.sh 1.0.2 # 跳过 vet/test
-CLEAN_ONLY=1 ./scripts/deploy.sh 1.0.2 # 只清理旧镜像与残留，不重建
-TARGET_ARCH=arm64 ./scripts/deploy.sh 1.0.2   # 目标是 ARM 服务器
+./scripts/deploy.sh 1.0.3              # 等价于 make deploy VERSION=1.0.3
+SKIP_TESTS=1 ./scripts/deploy.sh 1.0.3 # 跳过 vet/test
+CLEAN_ONLY=1 ./scripts/deploy.sh 1.0.3 # 只清理旧镜像与残留，不重建
+TARGET_ARCH=arm64 ./scripts/deploy.sh 1.0.3   # 目标是 ARM 服务器
 ```
 
 清理范围**只针对本项目**（按「悬空 + 入口 `/app/115bot`」识别），不会误删其他应用的镜像。

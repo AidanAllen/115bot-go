@@ -277,3 +277,56 @@ func TestTasksArePerUser(t *testing.T) {
 		t.Fatalf("别人的统计被影响，实际 %d", total)
 	}
 }
+
+// TestFailStaleRunning 进程被杀后残留的 running 任务应在启动时收敛为 failed。
+//
+// 否则用户会看到一条永远「进行中」的记录（2026-10-30 线上就出现过：
+// 发版重建容器时正在跑的任务停在 running）。
+func TestFailStaleRunning(t *testing.T) {
+	s := newTestStore(t)
+	me := int64(333)
+
+	runningID, err := s.CreateTask(me, KindTransfer, "fid-1", "a.mp4", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTask(runningID, StatusRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	doneID, err := s.CreateTask(me, KindTransfer, "fid-2", "b.mp4", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTask(doneID, StatusSuccess, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := s.FailStaleRunning("服务重启，任务已中断")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("应只收敛 1 条 running 任务，实际 %d", n)
+	}
+
+	counts, err := s.CountByStatus(me, KindTransfer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[StatusRunning] != 0 {
+		t.Fatalf("不应再有 running：%+v", counts)
+	}
+	if counts[StatusFailed] != 1 || counts[StatusSuccess] != 1 {
+		t.Fatalf("已有的成功记录被误改：%+v", counts)
+	}
+
+	recent, err := s.RecentTasks(me, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recent {
+		if r.ID == runningID && r.Err != "服务重启，任务已中断" {
+			t.Fatalf("失败原因未写入：%q", r.Err)
+		}
+	}
+}

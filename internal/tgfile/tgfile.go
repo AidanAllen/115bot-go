@@ -13,10 +13,12 @@ package tgfile
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/gotd/td/fileid"
 	"github.com/gotd/td/session"
@@ -36,8 +38,25 @@ type Config struct {
 	// SessionPath 保存 MTProto 会话（含 auth key，属敏感数据）。
 	// 留空则每次下载都重新握手，慢一些但不落盘。
 	SessionPath string
-	Logger      *slog.Logger
+	// StallTimeout 是「连续多久没有收到新数据就判定卡死」的阈值，留空用默认 3 分钟。
+	StallTimeout time.Duration
+	Logger       *slog.Logger
 }
+
+// defaultStallTimeout 是停滞判定阈值。
+//
+// 为什么必须有：转存队列是**单 worker 串行**的，而 MTProto 这条路在
+// 「已连上 DC、但一个字节都收不到」时会一直重试且不返回错误
+// （2026-10-30 线上实际发生过：一个 mp4 卡了十几分钟，同时 60 个任务在队列里等着）。
+// 没有这个阈值，一次静默卡死就让所有人的转存全部停摆。
+//
+// 3 分钟足够跨过短时的 FLOOD_WAIT / 建连抖动，又不至于让用户干等。
+const defaultStallTimeout = 3 * time.Minute
+
+// stallCheckInterval 是检查目标文件是否增长的间隔。
+//
+// 用 var 而不是 const：单元测试需要把它调小，否则一个用例要跑 15 秒。
+var stallCheckInterval = 15 * time.Second
 
 // Enabled 判断配置是否完整到可以启用 MTProto 下载。
 func (c Config) Enabled() bool {
@@ -72,6 +91,10 @@ func (c *Client) Enabled() bool { return c.cfg.Enabled() }
 //
 // fileID 是 Bot API 给的 file_id。它在 MTProto 里其实是 location 的一种编码，
 // gotd 能就地解出来（不产生网络请求），解完就能直接向对应 DC 取数据。
+//
+// 带停滞检测：连续 StallTimeout 没有写入任何字节就主动取消并报错。
+// 这一步是必需的——MTProto 在「连上了 DC 但收不到数据」时不会自己返回错误，
+// 会一直重试；而转存队列只有一个 worker，放它一直挂着等于全站转存停摆。
 func (c *Client) Download(ctx context.Context, fileID, dstPath string) (int64, error) {
 	if !c.Enabled() {
 		return 0, fmt.Errorf("MTProto 未启用（需要 TG_API_ID / TG_API_HASH）")
@@ -89,32 +112,66 @@ func (c *Client) Download(ctx context.Context, fileID, dstPath string) (int64, e
 		return 0, fmt.Errorf("创建下载目录失败: %w", err)
 	}
 
+	// 普通文件走 InputFileLocation；少数（如某些 web 资源）是 web location。
+	fileLoc, isFile := f.AsInputFileLocation()
+	webLoc, isWeb := f.AsInputWebFileLocation()
+	if !isFile && !isWeb {
+		return 0, fmt.Errorf("该 file_id 不可下载")
+	}
+
+	stall := c.cfg.StallTimeout
+	if stall <= 0 {
+		stall = defaultStallTimeout
+	}
+
+	// 下载上下文：停滞检测触发时由 watchdog 取消，
+	// 这样 gotd 内部的重试循环才能被真正打断。
+	dctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	out, err := os.Create(filepath.Clean(dstPath))
+	if err != nil {
+		return 0, fmt.Errorf("创建下载文件失败: %w", err)
+	}
+	pw := &countingWriterAt{w: out, last: time.Now()}
+
+	stalled := make(chan struct{})
+	go watchStall(dctx, pw, stall, stalled, cancel)
+
 	client := telegram.NewClient(c.cfg.AppID, c.cfg.AppHash, c.options())
-	err = client.Run(ctx, func(ctx context.Context) error {
+	runErr := client.Run(dctx, func(ctx context.Context) error {
 		if _, err := client.Auth().Bot(ctx, c.cfg.BotToken); err != nil {
 			return fmt.Errorf("MTProto 登录失败: %w", err)
 		}
 		api := client.API()
 		dl := downloader.NewDownloader()
-		// 普通文件走 InputFileLocation；少数（如某些 web 资源）是 web location。
-		if loc, ok := f.AsInputFileLocation(); ok {
-			if _, err := dl.Download(api, loc).ToPath(ctx, dstPath); err != nil {
-				return err
-			}
-			return nil
+
+		var b *downloader.Builder
+		if isFile {
+			b = dl.Download(api, fileLoc)
+		} else {
+			b = dl.Web(api, webLoc)
 		}
-		if loc, ok := f.AsInputWebFileLocation(); ok {
-			if _, err := dl.Web(api, loc).ToPath(ctx, dstPath); err != nil {
-				return err
-			}
-			return nil
-		}
-		return fmt.Errorf("该 file_id 不可下载")
+		// Parallel 保留多线程分块下载（跨境丢包链路上单线程会慢到不可用），
+		// 进度由 countingWriterAt 统计。
+		_, err := b.Parallel(ctx, pw)
+		return err
 	})
-	if err != nil {
+	if cerr := out.Close(); runErr == nil {
+		runErr = cerr
+	}
+
+	if runErr != nil {
 		// 半成品文件留着会占空间，也会让调用方误以为下载成功过
 		_ = os.Remove(dstPath)
-		return 0, err
+		select {
+		case <-stalled:
+			c.log.Warn("MTProto 下载停滞，已放弃",
+				"path", dstPath, "已收字节", pw.total(), "停滞阈值", stall)
+			return 0, fmt.Errorf("MTProto 下载停滞：连续 %s 没收到任何数据（网络到 Telegram 存储节点可能不通）", stall)
+		default:
+		}
+		return 0, runErr
 	}
 
 	st, err := os.Stat(dstPath)
@@ -123,6 +180,58 @@ func (c *Client) Download(ctx context.Context, fileID, dstPath string) (int64, e
 	}
 	c.log.Debug("MTProto 下载完成", "path", dstPath, "size", st.Size())
 	return st.Size(), nil
+}
+
+// watchStall 盯着写入进度，连续 stall 没有任何新字节就取消下载。
+func watchStall(ctx context.Context, pw *countingWriterAt, stall time.Duration, stalled chan<- struct{}, cancel context.CancelFunc) {
+	t := time.NewTicker(stallCheckInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if time.Since(pw.lastWrite()) >= stall {
+				close(stalled)
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+// countingWriterAt 统计实际写入的字节数与最后一次写入时间。
+//
+// gotd 的 Parallel 会从多个 goroutine 并发 WriteAt，所以计数必须加锁。
+type countingWriterAt struct {
+	w io.WriterAt
+
+	mu   sync.Mutex
+	n    int64
+	last time.Time
+}
+
+func (c *countingWriterAt) WriteAt(p []byte, off int64) (int, error) {
+	n, err := c.w.WriteAt(p, off)
+	if n > 0 {
+		c.mu.Lock()
+		c.n += int64(n)
+		c.last = time.Now()
+		c.mu.Unlock()
+	}
+	return n, err
+}
+
+func (c *countingWriterAt) total() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+func (c *countingWriterAt) lastWrite() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.last
 }
 
 // options 组装 gotd 客户端选项。

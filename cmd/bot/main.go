@@ -62,6 +62,14 @@ func run() error {
 	}
 	defer func() { _ = st.Close() }()
 
+	// 上一次进程被杀时正在跑的任务不会有任何机会写回结果，会永远停在 running。
+	// 启动时统一收敛成 failed，避免用户看到永不动弹的「进行中」。
+	if n, cerr := st.FailStaleRunning("服务重启，任务已中断"); cerr != nil {
+		logger.Warn("清理残留的进行中任务失败", "err", cerr)
+	} else if n > 0 {
+		logger.Info("已把残留的进行中任务标记为失败", "count", n)
+	}
+
 	app, err := bot.New(cfg, st, logger)
 	if err != nil {
 		return err

@@ -9,7 +9,7 @@ RUN go mod download
 
 COPY . .
 
-ARG VERSION=1.0.2
+ARG VERSION=1.0.3
 ARG BUILD_TIME=unknown
 
 RUN CGO_ENABLED=0 GOOS=linux go build \

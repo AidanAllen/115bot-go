@@ -50,6 +50,22 @@ func (s *Store) UpdateTask(id int64, status, errMsg string) error {
 	return err
 }
 
+// FailStaleRunning 把启动前残留的 running 任务标记为失败，返回处理条数。
+//
+// 为什么需要：任务状态只活在进程内存 + 这张表里，进程被杀（发版重建容器、
+// OOM、宿主机重启）时正在跑的任务不会有任何机会写回结果，于是永远停在
+// running。用户看到「进行中」却永远不会动，也没法重试判断。
+// 启动时统一收敛成 failed，让状态可信。
+func (s *Store) FailStaleRunning(reason string) (int64, error) {
+	res, err := s.db.Exec(
+		`UPDATE task SET status=?, err=?, updated_at=? WHERE status=?`,
+		StatusFailed, reason, now(), StatusRunning)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // CountByStatus 统计某个用户、指定类型的各状态数量。
 func (s *Store) CountByStatus(userID int64, kind string) (map[string]int, error) {
 	rows, err := s.db.Query(`SELECT status, COUNT(*) FROM task WHERE user_id=? AND kind=? GROUP BY status`, userID, kind)
