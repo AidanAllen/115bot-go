@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestSessionTakeOnce(t *testing.T) {
@@ -110,6 +111,33 @@ func TestSanitizeFileName(t *testing.T) {
 		if got := sanitizeFileName(in); got != want {
 			t.Fatalf("输入 %q 期望 %q，实际 %q", in, want, got)
 		}
+	}
+}
+
+func TestSanitizeFileNameTruncatesLongName(t *testing.T) {
+	// 超长中文名：一个汉字 3 字节，1000 个字 = 3000 字节，远超 115 上限。
+	long := strings.Repeat("测", 1000) + ".mp4"
+	got := sanitizeFileName(long)
+
+	// 必须截到字节上限以内。
+	if len(got) > maxFileNameBytes {
+		t.Fatalf("截断后仍超限：%d 字节（上限 %d）", len(got), maxFileNameBytes)
+	}
+	// 扩展名必须保留，否则 115 认不出文件类型。
+	if !strings.HasSuffix(got, ".mp4") {
+		t.Fatalf("扩展名丢失：%q", got)
+	}
+	// 不能把多字节字符从中间切断（截断点必须在字符边界上）。
+	if !utf8.ValidString(got) {
+		t.Fatalf("截断产生了非法 UTF-8：%q", got)
+	}
+}
+
+func TestTruncateBytesKeepsCharBoundary(t *testing.T) {
+	// 3 个汉字 = 9 字节；截到 8 字节应回退到 6 字节（2 个汉字），不能切断第 3 个。
+	got := truncateBytes("测测测", 8)
+	if got != "测测" {
+		t.Fatalf("期望 2 个汉字，实际 %q", got)
 	}
 }
 

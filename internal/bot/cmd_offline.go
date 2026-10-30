@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -677,24 +678,32 @@ func (a *App) dlClient() *http.Client {
 	}
 }
 
-// sanitizeFileName 去掉路径分隔符与危险字符，防止目录穿越。
+// maxFileNameBytes 是文件名的字节上限。
+//
+// 115 对文件名长度按 UTF-8 字节数限制：实测全中文名在 1528 字节以内可正常落盘，
+// 1531 字节起就被服务端静默截断（文件名对不上、扩展名丢失）。
+// 这里取 1024 字节作安全阈值，既留足余量，也远超正常命名需求
+// （≈341 个汉字 / 1024 个英文字符）。
+const maxFileNameBytes = 1024
+
+// sanitizeFileName 去掉路径分隔符与危险字符，防止目录穿越，并把超长名字截短。
 func sanitizeFileName(name string) string {
 	name = strings.TrimSpace(name)
 	name = strings.ReplaceAll(name, "\x00", "")
 	name = strings.ReplaceAll(name, "/", "_")
 	name = strings.ReplaceAll(name, "\\", "_")
 	name = strings.Trim(name, ".")
-	if r := []rune(name); len(r) > 180 {
-		// 截断必须保住扩展名：名字一长，直接切前 180 字会把末尾的 .mp4 一起切掉，
+	if len(name) > maxFileNameBytes {
+		// 截断必须保住扩展名：名字一长，直接切前缀会把末尾的 .mp4 一起切掉，
 		// 115 那边就认不出文件类型了。先留足扩展名的位置，再截前缀。
 		ext := filepath.Ext(name)
 		base := strings.TrimSuffix(name, ext)
-		keep := 180 - len([]rune(ext))
+		keep := maxFileNameBytes - len(ext)
 		if keep < 1 {
 			keep = 1
 		}
-		if br := []rune(base); len(br) > keep {
-			base = string(br[:keep])
+		if len(base) > keep {
+			base = truncateBytes(base, keep)
 		}
 		name = base + ext
 	}
@@ -702,4 +711,17 @@ func sanitizeFileName(name string) string {
 		return ""
 	}
 	return name
+}
+
+// truncateBytes 把字符串按 UTF-8 字节数安全截断，不会把多字节字符从中间切断。
+// 返回的长度可能略小于 n（因为不会截半个字符）。
+func truncateBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	// 从 n 向前回退，落到字符边界上。
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
