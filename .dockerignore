@@ -1,14 +1,22 @@
-# 只把要打包的二进制送进构建上下文，源码/数据不参与构建，避免 context 变大
-#
-# Dockerfile.runtime 通过 build arg BIN_NAME 指定要打包哪个二进制（默认
-# 115bot-linux-amd64），因此这里放行 bin/ 下所有平台产物，而不是只放行一个：
-# 否则换成 ARM（BIN_NAME=115bot-linux-arm64）时会因二进制被排除而 COPY 失败。
-*
-!bin/
-!bin/115bot-linux-amd64
-!bin/115bot-linux-arm64
-!bin/115bot-linux-armv7
-!bin/115bot-windows-amd64.exe
-!bin/115bot-windows-arm64.exe
-!bin/115bot-darwin-amd64
-!bin/115bot-darwin-arm64
+# 构建上下文忽略规则，需同时兼容两个 Dockerfile：
+#   - Dockerfile          （源码多阶段构建，GHCR/本机 build 用）：需要 go.mod/go.sum/cmd/internal 源码
+#   - Dockerfile.runtime  （打包预编译二进制，deploy.sh 部署用）：需要 bin/ 下的二进制
+# 所以这里只排除「本地专用」的大件与敏感文件，源码和 bin/ 都放行。
+
+# 本机离线工具链与构建缓存（go 工具链 259M + gopath 416M，绝不能进 context）
+/tools/
+
+# 运行时数据（含 115 cookie 明文、db、MTProto session）
+/data/
+
+# 环境变量与密钥
+.env
+.env.*
+
+# 部署/临时目录
+/tmp/
+scripts/*.env
+
+# 系统/编辑器
+.DS_Store
+*.log
