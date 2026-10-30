@@ -101,6 +101,11 @@ const (
 // 这是本项目唯一的上传实现：既能秒传，也能完成真实上传（含 OSS 分片）。
 //
 //	uploadinfo → initupload(4.0, 加密) → gettoken(STS) → OSS PUT → callback 入库
+//
+// ⚠️ 并发契约：bot 侧每次上传都通过 NewUploader 新建实例（userUploader 现构造），
+// 一个实例只服务一次 Upload，不要跨 goroutine 复用。mu 只保证「实例被串行复用时
+// 缓存字段不撕裂」（info/token/ossEP 的写与读-判空均经锁）；oss.go 里的顺读未加锁，
+// 并发 Upload 同一实例不安全。
 type webUploader struct {
 	client *Client
 	hc     *http.Client
@@ -263,19 +268,23 @@ func (u *webUploader) Upload(ctx context.Context, localPath, fileName string, si
 		return "", fmt.Errorf("115 未返回上传回调配置")
 	}
 
-	tok, err := u.uploadToken(ctx, false)
-	if err != nil {
+	if _, err := u.uploadToken(ctx, false); err != nil {
 		return "", err
 	}
-	u.token = tok
 
-	// 接入点不常变，取到一次就复用，避免每次上传都多打一次接口
-	if u.ossEP.APIEndpoint == "" {
-		ep, err := u.endpoint(ctx)
+	// 接入点不常变，取到一次就复用，避免每次上传都多打一次接口。
+	// 与 token/info 相同的缓存模式：带锁读 → miss 才请求 → 带锁写回。
+	u.mu.Lock()
+	ep := u.ossEP
+	u.mu.Unlock()
+	if ep.APIEndpoint == "" {
+		ep, err = u.endpoint(ctx)
 		if err != nil {
 			return "", err
 		}
+		u.mu.Lock()
 		u.ossEP = ep
+		u.mu.Unlock()
 	}
 
 	result, err := u.ossUploadFile(ctx, resp.Bucket, resp.Object, localPath, size, resp.Callback)

@@ -48,6 +48,9 @@ const uploadAppVersion = appVerMain
 
 // uploadUA 是上传接口要求的 UA。115 会校验 UA 与 appversion 的一致性。
 // 由 chUA 统一生成，与默认网页通道的 UA 严格一致。
+//
+// 两个用途：newWebUploaderWithChannel 在通道 UA 为空时用它兜底；
+// channel_test.go 用它锚定默认通道 UA（常量与通道表两处取值不允许漂移）。
 const uploadUA = "Mozilla/5.0 115disk/" + uploadAppVersion + " 115Browser/" + uploadAppVersion + " 115wangpan_android/" + uploadAppVersion
 
 // ecdhEncodeToken 生成请求参数 k_ec。

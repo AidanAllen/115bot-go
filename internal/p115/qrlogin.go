@@ -217,12 +217,18 @@ func NewQRLoginWithApp(timeout time.Duration, app string) *QRLogin {
 		ResponseHeaderTimeout: timeout,
 	}
 
-	name, _ := normalizeQRApp(app)
+	// name 是发给 115 的设备参数，ua 是该设备必须配套的 User-Agent（少数设备才有，
+	// 为空表示沿用网页 UA）。两者必须成对保存：整个登录流程（取码 / 轮询 / 换 cookie）
+	// 都用同一份 UA，事后写库也用这一份，否则 UA 与会话不匹配会被判为异常设备。
+	name, ua := normalizeQRApp(app)
+	if ua == "" {
+		ua = DefaultUA
+	}
 	return &QRLogin{
 		hc:     &http.Client{Timeout: timeout, Transport: tr},
 		paths:  defaultQRPaths,
 		bases:  defaultQRBases,
-		ua:     DefaultUA,
+		ua:     ua,
 		app:    name,
 		maxAge: 180 * time.Second, // 115 二维码有效期约 3 分钟，本地先留同量级上限
 	}
@@ -230,6 +236,12 @@ func NewQRLoginWithApp(timeout time.Duration, app string) *QRLogin {
 
 // App 返回实际使用的设备类型（已归一化）。
 func (q *QRLogin) App() string { return q.app }
+
+// UA 返回本次登录使用的 User-Agent。
+//
+// 登录成功后必须用这个值写库（而不是另行取 p115.DefaultUA）：115 会校验
+// UA 与会话的一致性，尤其 ios 系列设备各自带专用 UA，写错会被判为异常设备。
+func (q *QRLogin) UA() string { return q.ua }
 
 // qrState 抽取 115 各接口共有的结果字段。
 // 115 的 state 在不同接口上既可能是 1/0，也可能是 true/false，故用 RawMessage 兜住。

@@ -136,8 +136,10 @@ func (a *App) waitLogin(ctx context.Context, ac actor, st *qrLoginState, qr *p11
 
 	// 拿到 cookie 不等于可用，必须实调一次鉴权接口确认。
 	//
-	// UA 用扫码时的那一个：115 会校验 UA 与会话的一致性，用别的 UA 保存会埋雷。
-	ua := p115.DefaultUA
+	// UA 用扫码时实际使用的那一个（qandroid / alipaymini 等无专用 UA 的设备
+	// 就是网页 UA，而 ios 系列各有专用 UA）：115 会校验 UA 与会话的一致性，
+	// 用别的 UA 保存会埋雷。
+	ua := qr.UA()
 	cli := p115.New(cookie, ua, a.cfg.HTTPTimeout)
 	vctx, vcancel := context.WithTimeout(context.Background(), a.cfg.HTTPTimeout)
 	defer vcancel()

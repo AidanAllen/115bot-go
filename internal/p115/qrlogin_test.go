@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestParseCookieString 覆盖 cookie 为字符串的形态。
@@ -154,5 +155,41 @@ func TestUpscalePNG(t *testing.T) {
 func TestUpscalePNGInvalid(t *testing.T) {
 	if _, err := UpscalePNG([]byte("not a png"), 2); err == nil {
 		t.Fatal("非 PNG 输入应报错")
+	}
+}
+
+// TestQRLoginUAByApp 锁定「设备 → 登录 UA」的映射。
+//
+// ios 系列设备在 115 侧靠 UA 区分手机 / 管理端 / 平板（app 参数统一为 ios），
+// 不带专用 UA 会被识别为伪造设备；其余设备没有专用 UA，沿用网页 UA。
+// 登录成功后写库的也是这份 UA（cmd_login 经 qr.UA() 取），必须与本表一致。
+func TestQRLoginUAByApp(t *testing.T) {
+	cases := map[string]string{
+		"":           DefaultUA, // 默认 qandroid
+		"qandroid":   DefaultUA, // 默认设备，槽位 M1
+		"alipaymini": DefaultUA, // 无专用 UA，沿用网页
+		"wechatmini": DefaultUA,
+		"web":        DefaultUA,
+		"ios":        "UPhone/1.0.0",      // D1，与用户手机互踢
+		"qios":       "OfficePhone/1.0.0", // 管理端手机
+		"ipad":       "UPad/1.0.0",        // H1
+		"qipad":      "OfficePad/1.0.0",   // O1
+	}
+	for app, want := range cases {
+		q := NewQRLoginWithApp(time.Second, app)
+		if got := q.UA(); got != want {
+			t.Errorf("app=%q 的登录 UA\n want=%q\n  got=%q", app, want, got)
+		}
+	}
+	// 设备参数归一化也一并锁住：qios/qipad 向 115 声明的都是 ios
+	for app, want := range map[string]string{
+		"qios":  "ios",
+		"qipad": "ios",
+		"ipad":  "ios",
+		"":      DefaultQRApp,
+	} {
+		if got := NewQRLoginWithApp(time.Second, app).App(); got != want {
+			t.Errorf("app=%q 归一化后期望 %q，实际 %q", app, want, got)
+		}
 	}
 }

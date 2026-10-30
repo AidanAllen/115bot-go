@@ -119,26 +119,19 @@ func (a *App) openDirBrowser(ctx context.Context, ac actor, target string) {
 // showDirBrowser 渲染目录浏览器。msgID 为 0 时发新消息，否则就地刷新原消息。
 //
 // 列的是发起者自己 115 账号里的目录，所以必须先登录。
+//
+// ⚠️ msgID != 0 的调用必须来自 handleDirCallback（回调路径已在入口处
+// answerCallback(cbID) 应答过），这里不再重复应答。
 func (a *App) showDirBrowser(ctx context.Context, ac actor, msgID int, target, cid string, page int) {
 	btn := tgbotapi.NewInlineKeyboardButtonData
 
 	if !a.userLoggedIn(ac.UserID) {
-		if msgID == 0 {
-			a.send(ac.ChatID, TxtNeed115Login)
-		} else {
-			a.answerCallback("", "")
-			a.send(ac.ChatID, TxtNeed115Login)
-		}
+		a.send(ac.ChatID, TxtNeed115Login)
 		return
 	}
 	c := a.userClient(ac.UserID)
 	if !c.Ready() {
-		if msgID == 0 {
-			a.send(ac.ChatID, TxtNeed115Login)
-		} else {
-			a.answerCallback("", "")
-			a.send(ac.ChatID, TxtNeed115Login)
-		}
+		a.send(ac.ChatID, TxtNeed115Login)
 		return
 	}
 	cid = strings.TrimSpace(cid)
