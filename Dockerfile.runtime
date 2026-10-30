@@ -2,7 +2,7 @@
 # 源码构建版见 Dockerfile（多阶段，需要外网拉 golang:1.23-alpine + go mod download）
 #
 # 使用前先在仓库根目录产出 Linux 二进制：
-#   make VERSION=0.1.3 linux
+#   make linux        # 版本号取 Makefile 里的 VERSION（当前 1.0.1）
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates tzdata \
@@ -11,7 +11,7 @@ RUN apk add --no-cache ca-certificates tzdata \
 
 WORKDIR /app
 
-# 二进制文件名带平台后缀（build-all.sh 的产物）。换平台时在 compose 里传 build arg：
+# 二进制文件名带平台后缀（make linux 的产物）。换平台时在 compose 里传 build arg：
 #   BIN_NAME=115bot-linux-arm64 docker compose up -d --build
 ARG BIN_NAME=115bot-linux-amd64
 COPY bin/${BIN_NAME} /app/115bot

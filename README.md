@@ -1,9 +1,14 @@
 # 115bot-go
 
-[![Go Version](https://img.shields.io/badge/Go-1.23.4-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.23.4-00ADD8?style=flat-square)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-[![CI](https://github.com/AidanAllen/115bot-go/actions/workflows/ci.yml/badge.svg)](https://github.com/AidanAllen/115bot-go/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/AidanAllen/115bot-go?style=flat-square)](https://github.com/AidanAllen/115bot-go/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/AidanAllen/115bot-go/ci.yml?style=flat-square&label=CI)](https://github.com/AidanAllen/115bot-go/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/badge/release-v1.0.1-blue?style=flat-square)](https://github.com/AidanAllen/115bot-go/releases)
+
+<!-- 徽章刻意用固定值而非 shields.io 的动态查询（github/v/release）：
+     动态查询要回源调 GitHub API，API 限流或网络抖动时会裂图、或显示
+     "no releases or repo not found"。release 版本号由 release.yml 的
+     sync-badge job 在打 tag 时自动同步，不需要手动改。 -->
 
 115 网盘自动化 Telegram 机器人（Go 版）。把 Telegram 里的视频、文件、磁力链一键转存到你的 115 网盘。
 
@@ -155,7 +160,8 @@ TG_API_HASH=0123456789abcdef0123456789abcdef
 
 `file_id` 可从 `curl https://api.telegram.org/bot<TOKEN>/getUpdates` 里取。
 
-> 需要代理的环境设 `ALL_PROXY` / `NO_PROXY`（SOCKS5，golang.org/x/net/proxy 语义）。
+> 需要代理的环境设 `ALL_PROXY` / `NO_PROXY`（SOCKS5，golang.org/x/net/proxy 语义）；
+> Docker 部署时也可以直接写进 `.env`，会随 `env_file` 一起注入容器。
 > MTProto 会话（含 auth key）默认存在 `./data/tg.session.json`，属敏感数据。
 
 **与多用户 / 115 账号配置的关系**：两者完全正交，互不影响。
@@ -234,18 +240,23 @@ TARGET_ARCH=arm64 ./scripts/deploy.sh 1.0.1   # 目标是 ARM 服务器
 
 ## 配置
 
-见 `.env.example`，重点项：
+见 `.env.example`。真正需要关心的只有两项：
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
 | `BOT_TOKEN` | ✅ | Telegram Bot Token |
-| `OWNER_ID` | | 所有者 id（仅归属标记，不限制使用），留空则首个 `/setid` 生效 |
-| `TG_API_ID` + `TG_API_HASH` | | **转存 >20MB 文件必需**：MTProto 直连下载，不需要 Docker，跨平台一致 |
-| `TG_MTPROTO_SESSION` | | MTProto 会话落盘位置，默认 `./data/tg.session.json`（含 auth key，敏感） |
-| `TG_API_ENDPOINT` | | 自定义 Bot API 端点，一般不用填（访问 Telegram 不方便时可指向自建反代） |
+| `TG_API_ID` + `TG_API_HASH` | | **要转存 >20MB 文件才需要**：MTProto 直连下载，不需要 Docker，跨平台一致 |
+
+其余变量**一般都不用设置**，保持 `.env.example` 里的默认或注释状态即可：
+
+- `OWNER_ID` —— 所有者 id，只是归属标记（不限制谁能用），留空则首个点「绑定为我」（`/id` 或 `/setid`）的人成为所有者
+- `TG_API_ENDPOINT` —— 自定义 Bot API 端点，只有访问 Telegram 不方便、要走自建反代时才填
+- `TG_MTPROTO_SESSION` —— MTProto 会话落盘位置，默认 `./data/tg.session.json`（含 auth key，敏感），一般不用改
+- `DB_PATH` / `TEMP_DIR` —— 数据库与临时文件位置，默认 `./data/` 下，一般不用改
 
 > 115 凭据（cookie / UA / 通道 / 目录）**按用户存数据库**，环境变量只作兜底。
-> 多用户部署时 `TRANSFER_CID` / `OFFLINE_CID` / `DEFAULT_UA` 请留空。
+> `TRANSFER_CID` / `OFFLINE_CID` / `DEFAULT_UA` / `UPLOAD_CHANNEL` 在 `.env.example`
+> 里默认就是注释状态，保持不动即可。
 
 > `TG_API_ID` / `TG_API_HASH` 是 Telegram **应用级**凭据，全局只有一份，与每个用户各自的
 > 115 账号配置互不影响（见第 4 节末尾的对照表）。

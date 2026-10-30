@@ -2,7 +2,7 @@
 # 交叉编译出所有受支持平台的二进制，供 GitHub Release 分发。
 #
 #   ./scripts/build-all.sh            # 版本号取 internal/bot/app.go 里的默认值
-#   VERSION=1.1.0 ./scripts/build-all.sh
+#   VERSION=1.0.1 ./scripts/build-all.sh
 #   PLATFORMS="linux/amd64 linux/arm64" ./scripts/build-all.sh
 #
 # 产物落在 bin/dist/：

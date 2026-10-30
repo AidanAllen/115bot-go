@@ -1,3 +1,14 @@
-# 只把二进制送进构建上下文，源码/数据不参与构建，避免 context 变大
+# 只把要打包的二进制送进构建上下文，源码/数据不参与构建，避免 context 变大
+#
+# Dockerfile.runtime 通过 build arg BIN_NAME 指定要打包哪个二进制（默认
+# 115bot-linux-amd64），因此这里放行 bin/ 下所有平台产物，而不是只放行一个：
+# 否则换成 ARM（BIN_NAME=115bot-linux-arm64）时会因二进制被排除而 COPY 失败。
 *
+!bin/
 !bin/115bot-linux-amd64
+!bin/115bot-linux-arm64
+!bin/115bot-linux-armv7
+!bin/115bot-windows-amd64.exe
+!bin/115bot-windows-arm64.exe
+!bin/115bot-darwin-amd64
+!bin/115bot-darwin-arm64

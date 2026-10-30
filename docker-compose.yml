@@ -6,7 +6,7 @@ services:
       dockerfile: Dockerfile.runtime
       args:
         # 要跑在 ARM 机器上就把它改成 115bot-linux-arm64 / 115bot-linux-armv7
-        # （二进制由 scripts/build-all.sh 产出，放到 bin/ 下）
+        # （二进制由 make linux 产出到 bin/，或 make dist 产出到 bin/dist/ 后拷到 bin/ 下）
         BIN_NAME: ${BIN_NAME:-115bot-linux-amd64}
     image: hi_115bot:latest
     container_name: hi_115bot

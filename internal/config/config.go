@@ -23,7 +23,9 @@ type Config struct {
 	// 注意：换端点不能突破 20MB 限制，那是官方服务器的硬限制。
 	APIEndpoint string
 
-	// OwnerID 初始管理员 Telegram 用户 ID。为 0 时首次 /setid 的人即成为管理员。
+	// OwnerID 机器人所有者 Telegram 用户 ID。它只是「机器人归谁」的标记
+	// （供后续 web 控制台 / 用户管理用），不限制任何用户使用。
+	// 为 0 时，首个在机器人里点「绑定为我」或发 /setid 的人即成为所有者。
 	OwnerID int64
 
 	// DBPath SQLite 数据文件路径。
@@ -32,16 +34,18 @@ type Config struct {
 	// TempDir 文件下载临时目录。
 	TempDir string
 
-	// DefaultUA 默认 User-Agent，写入 115 账号配置时作为初始值。
+	// DefaultUA 默认 User-Agent。多用户模型下每位用户的 UA 按用户存数据库，
+	// 此值仅作为「该用户尚未设置」时的兜底。
 	DefaultUA string
 
-	// OfflineCID 默认离线保存目录 cid（可被运行时配置覆盖）。
+	// OfflineCID 兜底离线保存目录 cid（用户未设置时生效，可被运行时配置覆盖）。
 	OfflineCID string
 
-	// TransferCID 默认转存保存目录 cid（可被运行时配置覆盖）。
+	// TransferCID 兜底转存保存目录 cid（用户未设置时生效，可被运行时配置覆盖）。
 	TransferCID string
 
-	// UploadChannel 默认转存通道（网页 / App / 支付宝小程序 / 微信小程序），留空走默认通道。
+	// UploadChannel 兜底转存通道（网页 / App / 支付宝小程序 / 微信小程序），
+	// 留空走默认通道；每位用户仍可用 /channel 自选覆盖。
 	UploadChannel string
 
 	// PollTimeout Telegram 长轮询超时。

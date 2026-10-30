@@ -1,6 +1,9 @@
 # 构建产物
 /bin/
 
+# 本地 Go 构建缓存（tools/gocache，可随时重建，体积大）
+/tools/
+
 # 运行时数据（含 cookie 明文，务必不要提交）
 /data/
 *.db

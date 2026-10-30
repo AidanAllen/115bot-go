@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 本机一键更新部署新版 115bot（Go 版）
 #
-#   ./scripts/deploy.sh 0.2.4            # 编译 -> 上传 -> 服务器重建 -> 清理上一版遗留
-#   SKIP_TESTS=1 ./scripts/deploy.sh 0.2.4
-#   CLEAN_ONLY=1 ./scripts/deploy.sh 0.2.4   # 只上传并清理，不重建容器
+#   ./scripts/deploy.sh 1.0.1            # 编译 -> 上传 -> 服务器重建 -> 清理上一版遗留
+#   SKIP_TESTS=1 ./scripts/deploy.sh 1.0.1
+#   CLEAN_ONLY=1 ./scripts/deploy.sh 1.0.1   # 只上传并清理，不重建容器
 #
 # 清理范围（只针对新版 115bot，不碰老 Java 版 115bot 与其他容器）：
 #   - 上一版 hi_115bot 镜像、本项目构建产生的悬空镜像（每次重建都会留一个约 30MB）
@@ -13,7 +13,7 @@ set -euo pipefail
 
 VERSION_ARG="${1:-}"
 if [ -z "$VERSION_ARG" ]; then
-  echo "用法: $0 <版本号>   例: $0 0.2.4" >&2
+  echo "用法: $0 <版本号>   例: $0 1.0.1" >&2
   exit 1
 fi
 VERSION="${VERSION_ARG#v}"
@@ -26,7 +26,7 @@ RSH="$ROOT/rsh.sh"
 CLEAN_ONLY="${CLEAN_ONLY:-0}"
 
 # 目标平台（服务器架构不是 x86_64 时改这两个）：
-#   TARGET_ARCH=arm64 ./scripts/deploy.sh 1.1.0
+#   TARGET_ARCH=arm64 ./scripts/deploy.sh 1.0.1
 TARGET_OS="${TARGET_OS:-linux}"
 TARGET_ARCH="${TARGET_ARCH:-amd64}"
 BIN_NAME="115bot-$TARGET_OS-$TARGET_ARCH"

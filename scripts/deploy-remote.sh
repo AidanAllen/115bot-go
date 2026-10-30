@@ -2,11 +2,11 @@
 # 在服务器上执行：换入新二进制 -> 重建容器 -> 删除上一版遗留（旧镜像/源码构建残留/过期临时文件/旧备份）
 #
 # 由本机 scripts/deploy.sh 上传后调用，也可以单独执行：
-#   VERSION=0.2.4 sh /home/docker/docker-compose/hi_115bot/scripts/deploy-remote.sh
+#   VERSION=1.0.1 sh /home/docker/docker-compose/hi_115bot/scripts/deploy-remote.sh
 #   CLEAN_ONLY=1 sh /home/docker/docker-compose/hi_115bot/scripts/deploy-remote.sh   # 只清理，不重建
 #
 # BIN_NAME 指定二进制文件名（多平台构建后名字带 os/arch）：
-#   BIN_NAME=115bot-linux-arm64 VERSION=1.1.0 sh .../deploy-remote.sh
+#   BIN_NAME=115bot-linux-arm64 VERSION=1.0.1 sh .../deploy-remote.sh
 set -e
 
 DIR="${DEPLOY_DIR:-/home/docker/docker-compose/hi_115bot}"
