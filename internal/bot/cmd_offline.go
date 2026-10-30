@@ -225,33 +225,27 @@ func (a *App) runTransfer(ctx context.Context, job transferJob) {
 		_ = a.st.UpdateTask(taskID, store.StatusRunning, "")
 	}
 
-	// 先判断文件是不是已经在本地磁盘上：本地 Bot API 命中的话根本没有「下载」这一步，
-	// 发一条「开始下载」再补一句「其实不用下」纯属噪音（批量转存时会被放大 9 倍）。
-	f, fromLocal, ferr := a.resolveFile(fileID)
+	f, ferr := a.api.GetFile(tgbotapi.FileConfig{FileID: fileID})
 	if ferr != nil {
+		// 官方服务器对超过 20MB 的文件直接拒绝 getFile，这里给出可操作的提示
+		msg := fmt.Errorf("获取文件信息失败（超过 20MB 的文件需配置 TG_API_ID / TG_API_HASH 走 MTProto 下载）: %w", ferr)
 		if taskID > 0 {
-			_ = a.st.UpdateTask(taskID, store.StatusFailed, ferr.Error())
+			_ = a.st.UpdateTask(taskID, store.StatusFailed, msg.Error())
 		}
-		a.notify(job, stateFailed, ferr.Error(), "")
+		a.notify(job, stateFailed, msg.Error(), "")
 		return
 	}
 
-	var localPath string
-	if fromLocal {
-		localPath = f.FilePath
-	} else {
-		a.notify(job, stateDownloading, "", "")
-		p, err := a.downloadTelegramFile(ctx, f, fileName, size)
-		if err != nil {
-			if taskID > 0 {
-				_ = a.st.UpdateTask(taskID, store.StatusFailed, err.Error())
-			}
-			a.notify(job, stateFailed, err.Error(), "")
-			return
+	a.notify(job, stateDownloading, "", "")
+	localPath, err := a.downloadTelegramFile(ctx, f, fileName, size)
+	if err != nil {
+		if taskID > 0 {
+			_ = a.st.UpdateTask(taskID, store.StatusFailed, err.Error())
 		}
-		localPath = p
+		a.notify(job, stateFailed, err.Error(), "")
+		return
 	}
-	// 两种来源都要清理：临时副本不删会堆积，本地 API 的缓存不删会撑爆磁盘
+	// 用完即删：临时副本不删会堆积
 	defer func() {
 		if rerr := os.Remove(localPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
 			a.log.Warn("清理转存临时文件失败", "path", localPath, "err", rerr)
@@ -535,55 +529,17 @@ func hasMedia(m *tgbotapi.Message) bool {
 		m.VideoNote != nil || m.Animation != nil || len(m.Photo) > 0
 }
 
-// resolveFile 取文件信息，并判断能否直接读本地磁盘。
-//
-// 两条路子：
-//  1. 本地 Bot API（telegram-bot-api --local）：getFile 直接返回 telegram-bot-api
-//     容器内的**绝对路径**，文件已经被 tdlib 落到磁盘上了。bot 容器只要把同一个卷
-//     挂到同一个路径，就能直接读它，跨境下载这一步全省了——旧 Java bot 靠这个扛住 1.4GB 视频。
-//  2. 官方 Bot API：只能走 HTTP 下载到临时目录，有 20MB 硬限制。
-//
-// local 表示是不是直接来自本地 Bot API 的缓存目录。
-// 两种来源用完都必须删：临时副本不删会堆积，本地 API 的缓存不删会撑爆磁盘
-// （旧 bot 日志里的「删除上传完成，本地视频：…/videos/file_388.mp4」就是这一步）。
-//
-// 拆成 resolveFile + downloadTelegramFile 两步，是为了让调用方能**先知道**走哪条路：
-// 命中本地时根本不该发「开始下载」这种提示。
-func (a *App) resolveFile(fileID string) (f tgbotapi.File, local bool, err error) {
-	f, err = a.api.GetFile(tgbotapi.FileConfig{FileID: fileID})
-	if err != nil {
-		return f, false, fmt.Errorf("获取文件信息失败（超过官方 Bot API 20MB 限制的文件需启用本地 Bot API 服务）: %w", err)
-	}
-
-	// 本地 Bot API 直接给绝对路径；官方 API 给的是相对路径（photos/file_1.jpg 这种）。
-	// 用 isAbsPath 而不是 filepath.IsAbs：本地 API 给的是 POSIX 路径，
-	// 在 Windows 上跑 bot 时 filepath.IsAbs 认不出来（详见 pathutil.go）。
-	if isAbsPath(f.FilePath) {
-		st, serr := os.Stat(f.FilePath)
-		if serr == nil && st.Mode().IsRegular() {
-			if a.cfg.MaxDownloadBytes > 0 && st.Size() > a.cfg.MaxDownloadBytes {
-				return f, false, fmt.Errorf("文件超过大小限制 %s", humanSize(a.cfg.MaxDownloadBytes))
-			}
-			return f, true, nil
-		}
-		// 路径不可读就退回 HTTP 下载，不让整个转存卡死在这一步
-		a.log.Warn("本地 Bot API 路径不可读，退回 HTTP 下载", "path", f.FilePath)
-	}
-	return f, false, nil
-}
-
 // fileDirectURL 拼出文件的下载地址。
 //
 // 不能用库自带的 GetFileDirectURL：它把 api.telegram.org 写死在代码里，
-// 接本地 Bot API 时会拼出 https://api.telegram.org/file/bot<token>//var/lib/.../file_1.mp4
-// 这种永远下不到的死链。这里从 TG_API_ENDPOINT 反推同一个 server 的 /file 端点。
+// 一旦配了自定义端点就会拼出 https://api.telegram.org/file/bot<token>/... 这种死链。
+// 这里从 TG_API_ENDPOINT 反推同一个 server 的 /file 端点。
 func (a *App) fileDirectURL(filePath string) string {
 	base := strings.TrimSuffix(a.cfg.APIEndpoint, "/bot%s/%s")
 	if base == "" || base == a.cfg.APIEndpoint {
 		base = "https://api.telegram.org"
 	}
-	// --local 模式给的是绝对路径，去掉前导斜杠避免拼出双斜杠
-	return fmt.Sprintf("%s/file/bot%s/%s", base, a.api.Token, trimLeadingSlash(filePath))
+	return fmt.Sprintf("%s/file/bot%s/%s", base, a.api.Token, filePath)
 }
 
 // officialMaxFileBytes 是官方 Bot API 对 getFile 的硬上限（20MB），
@@ -592,11 +548,9 @@ const officialMaxFileBytes = 20 << 20
 
 // downloadTelegramFile 把文件拉到本地临时目录，返回本地路径。
 //
-// 三条路，按代价从小到大排：
-//  1. 本地 Bot API 已经在磁盘上（Linux 容器方案）——根本不用下载，
-//     由调用方 resolveFile 判断，不进这里；
-//  2. 官方 HTTP 下载——零额外连接，但 20MB 封顶；
-//  3. MTProto 直连下载——需要 TG_API_ID/TG_API_HASH，能下任意大小。
+// 两条路：
+//  1. 官方 HTTP 下载——零额外连接，但 20MB 封顶；
+//  2. MTProto 直连下载——需要 TG_API_ID/TG_API_HASH，能下任意大小。
 //
 // 所以：明确超过 20MB 的，官方那条路必然失败，直接走 MTProto，别浪费一趟往返；
 // 其余先走官方，失败了再拿 MTProto 兜一次。

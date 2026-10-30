@@ -89,8 +89,6 @@ const (
 	TxtTransferQueueFull   = "转存队列已满（上限 %d 个，当前 %d 个待处理），请等前面的任务跑完再发。\n\n发送 /state 可查看队列情况。"
 	TxtTransferDownloading = "开始下载：<b>%s</b>（%s）"
 	TxtTransferDownloaded  = "下载完成（%s），正在上传到 115，预计约 %s…"
-	// 本地 Bot API 模式下文件已在磁盘上，不需要跨境下载
-	TxtTransferLocalReady = "文件已在本地（本地 Bot API）：<b>%s</b>（%s）\n跳过下载，直接上传，预计约 %s…"
 	// 单文件与批量共用：%2$s 由调用方拼（单文件「方式…耗时…平均」，批量「耗时 · 速度」）
 	TxtTransferSuccess = "转存成功：<b>%s</b>\n%s\npick_code：<code>%s</code>"
 )

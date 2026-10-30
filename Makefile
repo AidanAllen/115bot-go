@@ -1,6 +1,6 @@
 APP        := 115bot
 PKG        := github.com/AidanAllen/115bot-go
-VERSION    ?= 1.2.0
+VERSION    ?= 1.0.1
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS    := -s -w \
 	-X $(PKG)/internal/bot.Version=$(VERSION) \

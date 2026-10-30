@@ -343,26 +343,37 @@ func TestTransferInflightDedup(t *testing.T) {
 
 // TestFileDirectURL 文件下载地址必须跟 TG_API_ENDPOINT 走同一个 server。
 //
-// 库自带的 GetFileDirectURL 把 api.telegram.org 写死了，接本地 Bot API 时
-// 会拼出指向官方的死链，所以这里必须自己从 endpoint 反推 /file 端点。
+// 库自带的 GetFileDirectURL 把 api.telegram.org 写死了，配了自定义端点就会
+// 拼出指向官方的死链，所以这里必须自己从 endpoint 反推 /file 端点。
 func TestFileDirectURL(t *testing.T) {
-	official := &App{
-		cfg: &config.Config{APIEndpoint: "https://api.telegram.org/bot%s/%s"},
-		api: &tgbotapi.BotAPI{Token: "TOKEN"},
+	cases := []struct {
+		name     string
+		endpoint string
+		filePath string
+		want     string
+	}{
+		{
+			name:     "官方端点",
+			endpoint: "https://api.telegram.org/bot%s/%s",
+			filePath: "photos/file_1.jpg",
+			want:     "https://api.telegram.org/file/botTOKEN/photos/file_1.jpg",
+		},
+		{
+			name:     "自定义端点",
+			endpoint: "http://127.0.0.1:8081/bot%s/%s",
+			filePath: "videos/file_1.mp4",
+			want:     "http://127.0.0.1:8081/file/botTOKEN/videos/file_1.mp4",
+		},
 	}
-	got := official.fileDirectURL("photos/file_1.jpg")
-	if got != "https://api.telegram.org/file/botTOKEN/photos/file_1.jpg" {
-		t.Fatalf("官方端点拼接错误：%s", got)
-	}
-
-	local := &App{
-		cfg: &config.Config{APIEndpoint: "http://telegram-bot-api:8081/bot%s/%s"},
-		api: &tgbotapi.BotAPI{Token: "TOKEN"},
-	}
-	// --local 模式给的是绝对路径，前导斜杠要去掉，否则拼出双斜杠
-	got = local.fileDirectURL("/var/lib/telegram-bot-api/909/videos/file_1.mp4")
-	want := "http://telegram-bot-api:8081/file/botTOKEN/var/lib/telegram-bot-api/909/videos/file_1.mp4"
-	if got != want {
-		t.Fatalf("本地端点拼接错误：\n got=%s\nwant=%s", got, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := &App{
+				cfg: &config.Config{APIEndpoint: c.endpoint},
+				api: &tgbotapi.BotAPI{Token: "TOKEN"},
+			}
+			if got := a.fileDirectURL(c.filePath); got != c.want {
+				t.Fatalf("拼接错误：\n got=%s\nwant=%s", got, c.want)
+			}
+		})
 	}
 }

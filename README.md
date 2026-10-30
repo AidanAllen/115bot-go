@@ -11,6 +11,7 @@
 - 📱 **扫码登录**：bot 直接发二维码，手机扫一下即可，无需手抄 cookie
 - 👥 **多用户隔离**：每个 Telegram 用户登录自己的 115 账号，文件各进各的网盘
 - 🔗 **离线下载**：直接发磁力链 / ed2k 链接，由 115 服务器自己拉取
+- 📦 **跨平台单文件**：7 个平台各一个可执行文件，零依赖，Windows 双击也能跑
 
 ## 功能
 
@@ -59,7 +60,7 @@
 ### 1. 准备
 
 - 在 [@BotFather](https://t.me/BotFather) 创建 bot，拿到 `BOT_TOKEN`
-- 复制配置模板：`cp .env.example .env`，填入 token
+- （要转存 >20MB 的文件）到 <https://my.telegram.org/> 申请 `api_id` / `api_hash`，见第 4 节
 
 ### 2. 直接下载二进制（不想编译就走这条）
 
@@ -76,6 +77,14 @@ cp .env.example .env && vi .env          # 至少填 BOT_TOKEN
 
 下载后可校验：`sha256sum -c 115bot-linux-amd64.sha256`（同名的 `.sha256` 文件一起下）。
 
+Windows 上直接跑：
+
+```bat
+copy .env.example .env
+rem 编辑 .env 填入 BOT_TOKEN
+115bot-windows-amd64.exe
+```
+
 ### 3. 构建与运行
 
 ```bash
@@ -83,7 +92,7 @@ cp .env.example .env && vi .env          # 至少填 BOT_TOKEN
 make build && ./bin/115bot
 
 # 或交叉编译 Linux 二进制（服务器部署用）
-make VERSION=1.2.0 linux        # 产出 bin/115bot-linux-amd64
+make VERSION=1.0.1 linux        # 产出 bin/115bot-linux-amd64
 
 # 所有平台一次性构建（Release 就是这么打的包）
 make dist                       # = ./scripts/build-all.sh，产物在 bin/dist/
@@ -111,64 +120,40 @@ make dist                       # = ./scripts/build-all.sh，产物在 bin/dist/
 PLATFORMS="linux/amd64 linux/arm64" ./scripts/build-all.sh   # 只要其中几个
 ```
 
-Windows 上直接跑：
-
-```bat
-copy .env.example .env
-rem 编辑 .env 填入 BOT_TOKEN
-115bot-windows-amd64.exe
-```
-
 > Windows 下优雅退出只响应 Ctrl+C（Windows 没有 Unix 的 SIGTERM 语义）；
 > Linux 下 `docker stop` / systemd 发的 SIGTERM 同样会优雅退出。
-> 想突破 20MB：本地 Bot API 服务端本身只有 Linux 容器镜像，Windows 上要靠
-> Docker Desktop 跑它（见下节），exe 通过 HTTP 用它；不跑就仍是官方 20MB 限制。
 
-ARM 机器用 Docker：
+### 4. 突破 20MB：内置 MTProto 下载
 
-```bash
-BIN_NAME=115bot-linux-arm64 docker compose up -d --build     # 32 位用 -armv7
-```
+官方 Bot API 硬性限制 `getFile` 只能下 20MB 以内的文件，**这是服务器端的限制，代码绕不过去**。
+官方给出的解法是跑一个独立的 `telegram-bot-api` 服务，但它是 C++ 写的、只有 Linux 容器镜像，
+Windows / macOS 上得先装 Docker，门槛过高。
 
-### 4. Docker 部署
-
-```bash
-# 把 docker-compose.yml、Dockerfile.runtime、.dockerignore、
-# bin/115bot-linux-amd64、.env 放到同一目录后：
-mkdir -p data tgdata && chown -R 101:101 data tgdata
-chmod 600 .env
-docker compose up -d --build      # 需要 >20MB 大文件：在 .env 配 TG_API_ID/TG_API_HASH（见第 5 节）
-```
-
-验证：
-
-```bash
-docker compose logs -f                                   # 看到「机器人已启动」
-docker run --rm --env-file .env -v "$PWD/data:/app/data" \
-  hi_115bot:latest --check-cookie                        # 校验 115 登录态
-```
-
-### 5. 突破 20MB：内置 MTProto 下载（推荐）
-
-配好 `TG_API_ID` + `TG_API_HASH` 即可，**不需要 Docker，Windows 跑 exe 也有效**——
-也就是说不用再起 `telegram-bot-api` 容器（compose 里那个是 `localapi` profile，默认不起）：
+本项目的做法是把「下载」这一步搬进主程序：用纯 Go 的 MTProto 实现（gotd/td）直连 Telegram 取文件，
+**不需要 Docker，不需要额外进程**，Windows 双击 exe 同样有效。
 
 ```env
 TG_API_ID=12345678
 TG_API_HASH=0123456789abcdef0123456789abcdef
 ```
 
-到 <https://my.telegram.org/> 申请（与本地 Bot API 服务用的是同一组凭据，可以复用）。
-配了之后：
+到 <https://my.telegram.org/> 申请（免费，一分钟的事）。配了之后：
 
-- 超过 20MB 的文件自动走 MTProto 下载（官方 API 那条路必然失败，不会白跑一趟）；
+- 超过 20MB 的文件自动走 MTProto 下载（官方那条路必然失败，不会白跑一趟）；
 - 20MB 以内仍走官方 HTTP 下载，零额外开销；
 - 官方下载失败时会用 MTProto 再兜一次；
-- 没配就完全等同老版本行为。
+- **不配置**则超过 20MB 的文件无法转存，其余功能不受影响。
 
-实现在 `internal/tgfile`：用 gotd/td（纯 Go 的 MTProto 2.0）把 Bot API 的
-`file_id` 就地解码成文件位置，再直连对应 DC 下载。收发消息仍然走 Bot API，
-命令、相册、批量进度那些逻辑一行没动。
+实现在 `internal/tgfile`：把 Bot API 的 `file_id` 就地解码成文件位置再直连对应 DC 下载。
+收发消息仍然走 Bot API，命令、相册、批量进度那些逻辑不受影响。
+
+链路自检（不用启动机器人）：
+
+```bash
+115bot --check-mtproto <file_id>      # 需要代理的环境设 ALL_PROXY
+```
+
+`file_id` 可从 `curl https://api.telegram.org/bot<TOKEN>/getUpdates` 里取。
 
 > 需要代理的环境设 `ALL_PROXY` / `NO_PROXY`（SOCKS5，golang.org/x/net/proxy 语义）。
 > MTProto 会话（含 auth key）默认存在 `./data/tg.session.json`，属敏感数据。
@@ -188,57 +173,31 @@ MTProto 登录的身份是 **bot token**（`client.Auth().Bot`），不是某个
 
 唯一的交汇点是**并发**：下载器在进程里是全局单实例，且用互斥锁串行化（session 文件被并发
 读写会写坏）。所以多人同时转存大文件时，**下载这一步会排队**，前一个人的下完才轮到下一个；
-各自的 115 上传仍走各自 cookie，互不影响。可以接受就不用管。
+各自的 115 上传仍走各自 cookie，互不影响。
 
-### 5b. 可选（v1.2.0 起已非必需）：本地 Bot API 容器
+### 5. Docker 部署
 
-> **新部署不需要这一节。** v1.2.0 起内置 MTProto 下载已经覆盖「突破 20MB」这个需求，
-> 而且跨平台、不用 Docker。下面只写给已经在跑这个容器、或确实想保留它的人。
-
-保留它还有两点独占价值，但都不是刚需：
-
-- `--local` 模式下文件落在 `tgdata` 卷里，bot 直接读盘，**省一次「TG DC → 本机」的下载**
-  （只有 bot 收到过、且被 `tgdata` 缓存住的文件才有这个待遇）；
-- 上传侧支持 2000MB —— 但本 bot 只往 115 传文件，不发文件回 Telegram，**用不上**。
-
-代价：必须 Docker；两个容器的 uid 与卷路径要严格对齐；`tgdata` 持续增长要清理；镜像会漂。
-两边**都需要** `api_id` / `api_hash`，凭据成本是一样的。
-
-同时启用时下载优先级为 **本地直读 > MTProto > 官方 HTTP**，MTProto 实际只当备胎。
-
-`telegram-bot-api` 服务端只有 Linux 镜像，Windows 跑不了原生版，要用只能靠
-Docker Desktop（WSL2 后端）单独起这一个容器，exe 走 HTTP 用它：
-
-```powershell
-docker run -d --name tgbotapi `
-  -p 127.0.0.1:8081:8081 `
-  -v "${PWD}\tgdata:/var/lib/telegram-bot-api" `
-  -e TELEGRAM_API_ID=12345678 `
-  -e TELEGRAM_API_HASH=0123456789abcdef0123456789abcdef `
-  -e TELEGRAM_LOCAL=1 `
-  aiogram/telegram-bot-api:10.3
+```bash
+# 把 docker-compose.yml、Dockerfile.runtime、.dockerignore、
+# bin/115bot-linux-amd64、.env 放到同一目录后：
+mkdir -p data && chown -R 101:101 data
+chmod 600 .env
+docker compose up -d --build
 ```
 
-（CMD 里把行尾反引号换成 `^`，`${PWD}` 换成 `%CD%`。api_id / api_hash 到
-<https://my.telegram.org/> 申请，属于凭据，别外传。）
+ARM 机器：
 
-然后在 `.env` 里指过去：
-
-```env
-TG_API_ENDPOINT=http://127.0.0.1:8081/bot%s/%s
+```bash
+BIN_NAME=115bot-linux-arm64 docker compose up -d --build     # 32 位用 -armv7
 ```
 
-验证：`curl http://127.0.0.1:8081/bot<TOKEN>/getMe` 能返回 bot 信息即可。
+验证：
 
-**Windows 与 Linux 的差异**：`--local` 返回的是 Linux 容器内的绝对路径
-（`/var/lib/telegram-bot-api/...`），exe 上 `os.Stat` 不到，程序会打一行
-「本地 Bot API 路径不可读，退回 HTTP 下载」并自动走回环 HTTP 拉文件——
-**20MB 限制照样被突破**（限制来自官方服务器，不在这一步），只是少了
-Linux 下的「零拷贝直读」，多一次本机 HTTP 拷贝（回环速度，可忽略）。
-
-> `tgdata/` 会缓存 bot 收到的所有文件，注意留磁盘；
-> 同一个 bot token 不能同时挂官方 server 和本地 server（会互相踢），
-> 想换回官方，把 `TG_API_ENDPOINT` 删掉重启即可。
+```bash
+docker compose logs -f                                   # 看到「机器人已启动」
+docker run --rm --env-file .env -v "$PWD/data:/app/data" \
+  hi_115bot:latest --check-cookie                        # 校验 115 登录态
+```
 
 ### 6. 升级（一键部署脚本）
 
@@ -246,38 +205,15 @@ Linux 下的「零拷贝直读」，多一次本机 HTTP 拷贝（回环速度�
 编译 → 上传 → 备份数据库 → 原子换二进制 → 重建容器 → **清理上一版遗留的镜像与临时文件**：
 
 ```bash
-./scripts/deploy.sh 1.2.0              # 等价于 make deploy VERSION=1.2.0
-SKIP_TESTS=1 ./scripts/deploy.sh 1.2.0 # 跳过 vet/test
-CLEAN_ONLY=1 ./scripts/deploy.sh 1.2.0 # 只清理旧镜像与残留，不重建
-TARGET_ARCH=arm64 ./scripts/deploy.sh 1.2.0   # 目标是 ARM 服务器
+./scripts/deploy.sh 1.0.1              # 等价于 make deploy VERSION=1.0.1
+SKIP_TESTS=1 ./scripts/deploy.sh 1.0.1 # 跳过 vet/test
+CLEAN_ONLY=1 ./scripts/deploy.sh 1.0.1 # 只清理旧镜像与残留，不重建
+TARGET_ARCH=arm64 ./scripts/deploy.sh 1.0.1   # 目标是 ARM 服务器
 ```
 
 清理范围**只针对本项目**（按「悬空 + 入口 `/app/115bot`」识别），不会误删其他应用的镜像。
 
 > 重建容器会中断进行中的转存任务，大文件转存期间别发版。
-
-### 7. 本地 Bot API 的版本为什么钉死在 10.3
-
-compose 里写的是 `aiogram/telegram-bot-api:10.3`，不是 `latest`，原因：
-
-- **latest 会漂**：Hub 上同一个 `10.3` 在 2026-10 内就被重建过多次
-  （实测 10-28 与 10-29 两次 digest 不同），每次 pull 都可能换掉 tdlib，
-  行为和目录约定都可能变，出问题时往往表现为「整条消息解析失败」这种静默故障。
-- **本项目客户端库是 `go-telegram-bot-api v5.5.1`（对应 Bot API 5.x）**，
-  与服务端 10.3 差了好几个大版本。目前用到的字段
-  （`Photo` / `Video` / `Document` / `MediaGroupID` / `Caption` / `FileID` / `FileSize`、
-  `getFile.FilePath` 在 `--local` 下返回绝对路径）都是常年稳定的老字段，实测可用；
-  已知边界是 Bot API 7.0 起的 `external_reply`——跨聊天的引用回复不再给
-  `reply_to_message`，v5.5.1 解析不到，那种情况下 `/d` 回复会找不到文件
-  （同聊天内回复正常）。
-- **tdlib 的库只升不降**：换回旧镜像可能起不来。
-
-`10.3` 是 multi-arch manifest，amd64 / arm64 机器都写同一个 tag；
-还有 `10.3-linuxarmv7`、`10.3-linux386` 等专用 tag。
-想钉到某一次具体构建，把 tag 换成 `@sha256:<digest>`（`docker inspect` 可查）。
-
-升级步骤：备份 `tgdata/` → 改 tag → `docker compose --profile localapi up -d` →
-验证 `getMe` 与一次真实转存 → 不行就改回原 tag。
 
 ## 命令速查
 
@@ -304,15 +240,15 @@ compose 里写的是 `aiogram/telegram-bot-api:10.3`，不是 `latest`，原因�
 |---|---|---|
 | `BOT_TOKEN` | ✅ | Telegram Bot Token |
 | `OWNER_ID` | | 所有者 id（仅归属标记，不限制使用），留空则首个 `/setid` 生效 |
-| `TG_API_ENDPOINT` | | 本地 Bot API 端点（Linux 容器方案），见下 |
-| `TG_API_ID` + `TG_API_HASH` | | **大文件（>20MB）推荐**：MTProto 直连下载，不需要 Docker，Windows exe 同样有效 |
+| `TG_API_ID` + `TG_API_HASH` | | **转存 >20MB 文件必需**：MTProto 直连下载，不需要 Docker，跨平台一致 |
 | `TG_MTPROTO_SESSION` | | MTProto 会话落盘位置，默认 `./data/tg.session.json`（含 auth key，敏感） |
+| `TG_API_ENDPOINT` | | 自定义 Bot API 端点，一般不用填（访问 Telegram 不方便时可指向自建反代） |
 
-> 从 v0.2.0 起，115 凭据（cookie / UA / 通道 / 目录）**按用户存数据库**，环境变量只作兜底。
+> 115 凭据（cookie / UA / 通道 / 目录）**按用户存数据库**，环境变量只作兜底。
 > 多用户部署时 `TRANSFER_CID` / `OFFLINE_CID` / `DEFAULT_UA` 请留空。
 
 > `TG_API_ID` / `TG_API_HASH` 是 Telegram **应用级**凭据，全局只有一份，与每个用户各自的
-> 115 账号配置互不影响（详见第 5 节末尾的对照表）；不配置则行为与旧版完全一致。
+> 115 账号配置互不影响（见第 4 节末尾的对照表）。
 
 ## 架构
 
@@ -323,7 +259,6 @@ internal/config   环境变量加载与启动校验
 internal/store    SQLite 持久化（app_config / user_config / task）
 internal/p115     115 适配层（登录 / 目录 / 离线 / 上传 / 转存通道）
 internal/bot      Telegram 层（命令 / 路由 / 菜单 / 状态机）
-                  pathutil.go     跨平台路径判断（本地 Bot API 给的是 POSIX 绝对路径）
                   mediagroup.go   相册缓冲与共享说明命名
                   app.go          转存队列 / 批量进度消息
 internal/tgfile   MTProto 直连下载（gotd/td），用于突破官方 20MB 限制
@@ -333,10 +268,8 @@ scripts           deploy.sh（一键部署+清理）、deploy-remote.sh（服务
                   release.yml（push tag 后自动构建并上传 Release 产物）
 ```
 
-跨平台相关的三条约定（改动时留意）：
+跨平台相关的两条约定（改动时留意）：
 
-- 判断本地 Bot API 给的路径必须用 `internal/bot` 的 `isAbsPath`，
-  不能直接 `filepath.IsAbs`（后者按运行平台判断，Windows 上会把 POSIX 绝对路径认成相对路径）
 - 退出信号写在 `cmd/bot/signals_<平台>.go`，不要在 `main.go` 里写死 `syscall.SIGTERM`
 - 临时目录、账号文件一类路径用 `os.TempDir()`，不要硬写 `/tmp`
 
@@ -360,16 +293,17 @@ done
 
 ## 已知限制
 
-- **20MB 门槛**：官方 Bot API 限制 `getFile` 20MB、上传 50MB。
-  突破办法有二选一：配置 `TG_API_ID` + `TG_API_HASH` 走内置 MTProto 下载（推荐，
-  跨平台、无需 Docker），或部署本地 Bot API 服务（只有 Linux 容器镜像，
-  Windows 上要靠 Docker Desktop 跑，见 5b）。两者都不做就仍受 20MB 限制
+- **20MB 门槛**：官方 Bot API 限制 `getFile` 20MB、上传 50MB，这是服务器端的硬限制。
+  唯一的突破方式是配置 `TG_API_ID` + `TG_API_HASH` 走内置 MTProto 下载（见第 4 节），
+  跨平台、无需 Docker；不配置则超过 20MB 的文件无法转存
 - **大文件下载是全局串行**：MTProto 下载器单实例 + session 文件不能并发写，
-  多人同时转存 >20MB 时下载阶段会排队（上传仍各自进行）。详见第 5 节
+  多人同时转存 >20MB 时下载阶段会排队（上传仍各自进行）
 - 上传走 115 网页通道，不支持分片：115 回调校验的 `${sha1}` 在分片模式拿不到整体值，合并会报 `errno=10002`
 - 上传吞吐受部署机器上行带宽限制，跨境部署时较慢（实测日本 → 阿里云深圳丢包约 15%，
   真实上传约 30KB/s；命中 115 秒传时是秒级完成）。大文件建议优先用离线下载
 - 离线任务提交为同步方式，大批量链接（>50 条）会较慢
+- 跨聊天的引用回复（Bot API 7.0 起改为 `external_reply`）解析不到，
+  那种情况下 `/d` 回复会找不到文件（同聊天内回复正常）
 - 重建容器会中断进行中的转存任务，大文件转存期间别发版
 
 ## License
@@ -381,14 +315,3 @@ done
 本项目仅供学习与个人合法使用。使用者须自行确保其使用行为符合所在地法律法规，并遵守 115 网盘及 Telegram 的相关服务条款。
 
 任何人下载、使用或分发本项目的代码，均视为已充分理解并同意：因使用本项目而产生的任何后果（包括但不限于侵犯他人权益、违反平台规则、违反当地法律等），均由使用者本人承担，与本项目作者无关。
-
-### 使用边界（明确禁止）
-
-本项目**禁止**用于以下任何用途：
-
-- ❌ 转存、下载或传播**侵权内容**（盗版影视、音乐、软件、电子书等）
-- ❌ 传播**违法违规内容**（涉黄、涉赌、涉毒、涉暴恐等）
-- ❌ 利用本工具进行**批量盗链、绕过付费或滥用平台资源**等违反服务条款的行为
-- ❌ 任何可能侵犯他人知识产权、隐私权或合法权益的行为
-
-作者仅提供工具代码本身，不对使用者的具体使用行为负责。请勿将本项目用于任何非法或侵权用途。

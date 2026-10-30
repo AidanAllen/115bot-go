@@ -53,11 +53,8 @@ else
 
   # 4) 记录当前镜像，重建后再删它
   OLD_IMAGE="$(docker images -q hi_115bot:latest)"
-  PROFILE=""
-  if grep -q 'telegram-bot-api' .env 2>/dev/null; then PROFILE="--profile localapi"; fi
-  # shellcheck disable=SC2086
-  docker compose $PROFILE up -d --build
-  echo "[4/6] 容器已重建（profile: ${PROFILE:-默认}）"
+  docker compose up -d --build
+  echo "[4/6] 容器已重建"
 fi
 
 # 5) 删除本次被顶掉的镜像，以及历史上遗留的本项目悬空镜像

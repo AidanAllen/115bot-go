@@ -20,7 +20,7 @@ import (
 )
 
 // Version 由构建时通过 -ldflags 注入。
-var Version = "1.2.0"
+var Version = "1.0.1"
 
 // BuildTime 构建时间，同样由 -ldflags 注入。
 var BuildTime = "unknown"
@@ -122,7 +122,7 @@ type batchItem struct {
 
 // transferBatch 是一批文件（一个相册）共享的那一条进度消息。
 //
-// 一次转存 6 图 + 2 视频时，逐个发「开始下载 / 已在本地 / 正在上传 / 转存成功」
+// 一次转存 6 图 + 2 视频时，逐个发「开始下载 / 正在上传 / 转存成功」
 // 会刷出几十条消息，和别的批次一交错完全没法看。
 // 整批只发这一条，谁在传、谁传完了都在这条里就地更新。
 type transferBatch struct {
@@ -512,7 +512,7 @@ func (job transferJob) progressText(st jobState, detail, code string) string {
 	case stateDownloading:
 		return fmt.Sprintf(TxtTransferDownloading, name, humanSize(job.size))
 	case stateUploading:
-		return fmt.Sprintf(TxtTransferLocalReady, name, humanSize(job.size), detail)
+		return fmt.Sprintf(TxtTransferDownloaded, humanSize(job.size), detail)
 	case stateDone:
 		return fmt.Sprintf(TxtTransferSuccess, name, detail, code)
 	case stateFailed:

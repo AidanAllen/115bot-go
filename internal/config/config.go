@@ -17,9 +17,10 @@ type Config struct {
 	// BotToken Telegram Bot Token，必填。
 	BotToken string
 
-	// APIEndpoint 自定义 Bot API 端点（用于对接 telegram-bot-api 本地服务）。
+	// APIEndpoint 自定义 Bot API 端点（访问官方不便时可指向自建反代）。
 	// 留空则使用官方 https://api.telegram.org。格式必须含两个 %s 占位符：
 	//   http://127.0.0.1:8081/bot%s/%s
+	// 注意：换端点不能突破 20MB 限制，那是官方服务器的硬限制。
 	APIEndpoint string
 
 	// OwnerID 初始管理员 Telegram 用户 ID。为 0 时首次 /setid 的人即成为管理员。
@@ -55,8 +56,8 @@ type Config struct {
 	// TGAPIID / TGAPIHash 来自 https://my.telegram.org/ 的应用凭据。
 	//
 	// 配了这两个，超过官方 20MB 限制的文件会改走 MTProto 直连下载
-	// （不需要本地 telegram-bot-api 服务，Windows 上跑 exe 也有效）；
-	// 不配就退回官方 Bot API，仍受 20MB 限制。
+	// （不需要 Docker，Windows 上跑 exe 也有效）；
+	// 不配就退回官方 Bot API，超过 20MB 的文件无法转存。
 	TGAPIID   int
 	TGAPIHash string
 
