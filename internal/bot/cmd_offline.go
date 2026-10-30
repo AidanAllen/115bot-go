@@ -680,11 +680,13 @@ func (a *App) dlClient() *http.Client {
 
 // maxFileNameBytes 是文件名的字节上限。
 //
-// 115 对文件名长度按 UTF-8 字节数限制：实测全中文名在 1528 字节以内可正常落盘，
-// 1531 字节起就被服务端静默截断（文件名对不上、扩展名丢失）。
-// 这里取 1024 字节作安全阈值，既留足余量，也远超正常命名需求
-// （≈341 个汉字 / 1024 个英文字符）。
-const maxFileNameBytes = 1024
+// 115 各上传通道（web / app / 支付宝小程序 / 微信小程序）对文件名长度的
+// 限制并不一致：web 通道实测 1500+ 字节仍可落盘，但小程序通道对超长名的
+// 容忍度低得多，会直接返回「file name too long」。与其逐通道试边界，不如
+// 取一个所有端都安全的值——255 字节是 POSIX 文件名标准上限（NAME_MAX），
+// Linux / Windows / 各云盘与小程序端都兼容，中文约 85 个汉字、英文 255 字符，
+// 正常命名完全够用。
+const maxFileNameBytes = 255
 
 // sanitizeFileName 去掉路径分隔符与危险字符，防止目录穿越，并把超长名字截短。
 func sanitizeFileName(name string) string {

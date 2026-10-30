@@ -33,16 +33,17 @@ func main() {
 	size := flag.Int64("size", 1<<20, "生成测试文件的大小")
 	keep := flag.Bool("keep", false, "保留上传后的文件（默认删除）")
 	partSize := flag.Int64("partsize", 0, "分片大小（默认 10MB，调小便于快速验证分片链路）")
+	channel := flag.String("channel", "", "上传通道（web/app/alipaymini/wechatmini，留空用默认 web）")
 	timeout := flag.Duration("timeout", 10*time.Minute, "总超时")
 	flag.Parse()
 
-	if err := run(*account, *cid, *file, *name, *size, *keep, *partSize, *timeout); err != nil {
+	if err := run(*account, *cid, *file, *name, *size, *keep, *partSize, *channel, *timeout); err != nil {
 		fmt.Fprintf(os.Stderr, "失败: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(accountPath, cid, file, name string, size int64, keep bool, partSize int64, timeout time.Duration) error {
+func run(accountPath, cid, file, name string, size int64, keep bool, partSize int64, channel string, timeout time.Duration) error {
 	if cid == "" {
 		return fmt.Errorf("必须指定 -cid")
 	}
@@ -84,7 +85,7 @@ func run(accountPath, cid, file, name string, size int64, keep bool, partSize in
 	fmt.Printf("文件: %s  大小=%s  sha1=%s\n", name, humanSize(fi.Size()), sum)
 
 	client := p115.New(acc.Cookie, acc.UserAgent, 60*time.Second)
-	up := p115.NewUploader(client, "")
+	up := p115.NewUploader(client, channel)
 	if !up.Available() {
 		return fmt.Errorf("上传器不可用")
 	}
