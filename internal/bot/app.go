@@ -284,6 +284,7 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*App, error) {
 			AppHash:     cfg.TGAPIHash,
 			BotToken:    cfg.BotToken,
 			SessionPath: cfg.MTProtoSession,
+			Debug:       strings.EqualFold(cfg.LogLevel, "debug"),
 			Logger:      log,
 		})
 		log.Info("已启用 MTProto 直连下载（大文件不再受官方 20MB 限制）")

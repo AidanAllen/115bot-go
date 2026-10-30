@@ -1,6 +1,8 @@
 APP        := 115bot
 PKG        := github.com/AidanAllen/115bot-go
-VERSION    ?= 1.0.3
+# 版本号唯一来源是 internal/bot/app.go 的 `var Version`；这里只在命令行没传
+# VERSION 时回读源码默认值，避免 Makefile 与源码各存一份、改了不同步。
+VERSION    ?= $(shell grep -m1 'var Version = ' internal/bot/app.go | sed 's/.*"\(.*\)".*/\1/')
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS    := -s -w \
 	-X $(PKG)/internal/bot.Version=$(VERSION) \

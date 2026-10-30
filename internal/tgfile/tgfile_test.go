@@ -8,6 +8,57 @@ import (
 	"time"
 )
 
+// TestNewNilLoggerFallback 验证 logger 为 nil 时不会 panic，而是用静默 logger 兜底。
+func TestNewNilLoggerFallback(t *testing.T) {
+	c := New(Config{})
+	if c == nil {
+		t.Fatal("New 不应返回 nil")
+	}
+	if c.log == nil {
+		t.Fatal("nil logger 应被兜底为非 nil logger")
+	}
+}
+
+// TestClientEnabledDelegatesToConfig 验证 Client.Enabled 代理到 Config.Enabled。
+func TestClientEnabledDelegatesToConfig(t *testing.T) {
+	if got := New(Config{}).Enabled(); got {
+		t.Fatal("空配置的 Client.Enabled 应为 false")
+	}
+	if got := New(Config{AppID: 1, AppHash: "h", BotToken: "t"}).Enabled(); !got {
+		t.Fatal("凭据齐全的 Client.Enabled 应为 true")
+	}
+}
+
+// TestOptionsNoUpdatesAndResolver 验证 options 总是关闭更新、挂上代理拨号解析器，
+// 并根据 Debug / SessionPath 决定是否加日志与会话存储。
+func TestOptionsNoUpdatesAndResolver(t *testing.T) {
+	// 未开 debug、无 session 路径：Logger 与 SessionStorage 应为 nil
+	plain := New(Config{AppID: 1, AppHash: "h", BotToken: "t"})
+	opts := plain.options()
+	if !opts.NoUpdates {
+		t.Error("NoUpdates 必须为 true，否则更新会被 MTProto 与 Bot API 各收一遍")
+	}
+	if opts.Resolver == nil {
+		t.Error("Resolver 不能为 nil，否则 ALL_PROXY 代理不生效")
+	}
+	if opts.Logger != nil {
+		t.Error("未开 Debug 时 Logger 应为 nil（由 gotd 内部兜底）")
+	}
+	if opts.SessionStorage != nil {
+		t.Error("未配置 SessionPath 时 SessionStorage 应为 nil")
+	}
+
+	// 开 debug + 配置 session 路径：两者都应生效
+	dbg := New(Config{AppID: 1, AppHash: "h", BotToken: "t", Debug: true, SessionPath: filepath.Join(t.TempDir(), "tg.session.json")})
+	opts = dbg.options()
+	if opts.Logger == nil {
+		t.Error("开 Debug 时 Logger 不应为 nil")
+	}
+	if opts.SessionStorage == nil {
+		t.Error("配置 SessionPath 时 SessionStorage 不应为 nil")
+	}
+}
+
 func TestConfigEnabled(t *testing.T) {
 	cases := []struct {
 		name string

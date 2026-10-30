@@ -118,6 +118,7 @@ func runCheckMTProto(cfg *config.Config, fileID string, logger *slog.Logger) err
 		AppHash:     cfg.TGAPIHash,
 		BotToken:    cfg.BotToken,
 		SessionPath: cfg.MTProtoSession,
+		Debug:       strings.EqualFold(cfg.LogLevel, "debug"),
 		Logger:      logger,
 	})
 	dst := filepath.Join(cfg.TempDir, fmt.Sprintf("mtproto_check_%d.bin", time.Now().UnixNano()))

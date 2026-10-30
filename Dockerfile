@@ -9,14 +9,18 @@ RUN go mod download
 
 COPY . .
 
-ARG VERSION=1.0.3
+# 版本号唯一来源是 internal/bot/app.go 的 `var Version`；这里不硬编码，
+# 直接从源码抠出来，改了源码就不用手动同步 Dockerfile。
+ARG VERSION
 ARG BUILD_TIME=unknown
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags "-s -w \
-      -X github.com/AidanAllen/115bot-go/internal/bot.Version=${VERSION} \
-      -X github.com/AidanAllen/115bot-go/internal/bot.BuildTime=${BUILD_TIME}" \
-    -o /out/115bot ./cmd/bot
+RUN VERSION="${VERSION:-$(grep -m1 'var Version = ' internal/bot/app.go | sed 's/.*"\(.*\)".*/\1/')}" \
+    && echo "building version ${VERSION}" \
+    && CGO_ENABLED=0 GOOS=linux go build \
+        -ldflags "-s -w \
+          -X github.com/AidanAllen/115bot-go/internal/bot.Version=${VERSION} \
+          -X github.com/AidanAllen/115bot-go/internal/bot.BuildTime=${BUILD_TIME}" \
+        -o /out/115bot ./cmd/bot
 
 # ---- 运行镜像 ----
 FROM alpine:3.20

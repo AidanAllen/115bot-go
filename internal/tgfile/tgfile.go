@@ -25,6 +25,7 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/dcs"
 	"github.com/gotd/td/telegram/downloader"
+	"go.uber.org/zap"
 	"golang.org/x/net/proxy"
 )
 
@@ -40,7 +41,12 @@ type Config struct {
 	SessionPath string
 	// StallTimeout 是「连续多久没有收到新数据就判定卡死」的阈值，留空用默认 3 分钟。
 	StallTimeout time.Duration
-	Logger       *slog.Logger
+	// Debug 打开 gotd 内部日志（连接、鉴权、取块重试都会打出来）。
+	//
+	// gotd 默认用静默 logger，出问题时只能看到「没反应」——排查 MTProto
+	// 卡在建连还是卡在取块，必须靠这层日志。跟 LOG_LEVEL=debug 联动。
+	Debug  bool
+	Logger *slog.Logger
 }
 
 // defaultStallTimeout 是停滞判定阈值。
@@ -248,6 +254,11 @@ func (c *Client) options() telegram.Options {
 		Resolver: dcs.Plain(dcs.PlainOptions{
 			Dial: proxy.Dial,
 		}),
+	}
+	if c.cfg.Debug {
+		// gotd 默认 zap.NewNop()，卡住时完全没有线索。
+		// 只有显式开 debug（LOG_LEVEL=debug）才铺日志，正常运行不产生噪音。
+		opts.Logger = zap.Must(zap.NewDevelopment())
 	}
 	if c.cfg.SessionPath != "" {
 		_ = os.MkdirAll(filepath.Dir(c.cfg.SessionPath), 0o700)
