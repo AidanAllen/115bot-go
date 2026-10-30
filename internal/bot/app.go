@@ -433,11 +433,17 @@ func (a *App) transferWorker() {
 
 // queueTransfer 把任务放进队列，返回排队位置（从 1 开始）。
 // 队列满时返回 0。
+//
+// 计数必须在入队**之前** +1：若先入队再 +1，worker 可能抢先取出并 -1，
+// 使这次 Add(1) 返回 0，调用方会误判成「队列已满」——文件其实已经在转了，
+// 用户却收到拒绝提示，去重标记与文件名占位还会被误回滚。
 func (a *App) queueTransfer(job transferJob) int {
+	pos := int(a.queued.Add(1))
 	select {
 	case a.transferQ <- job:
-		return int(a.queued.Add(1))
+		return pos
 	default:
+		a.queued.Add(-1)
 		return 0
 	}
 }

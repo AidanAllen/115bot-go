@@ -190,7 +190,10 @@ func (a *App) enqueueTransferIn(ctx context.Context, ac actor, target *tgbotapi.
 			batch.set(index, stateFailed, "队列已满", "")
 			a.editMessage(batch.chatID, batch.msgID, batch.render())
 		} else {
-			a.sendReply(ac.ChatID, replyTo, fmt.Sprintf(TxtTransferQueueFull, transferQueueSize, a.queueDepth()))
+			// 单文件已经发过「已加入队列」，就地改写那一条：
+			// 再补一条新消息会让用户同时看到「已加入队列」和「队列已满」两句互相矛盾的话。
+			a.report(transferJob{ac: ac, replyTo: replyTo, progressMsgID: progressMsgID},
+				fmt.Sprintf(TxtTransferQueueFull, transferQueueSize, a.queueDepth()))
 		}
 		return
 	}
@@ -225,19 +228,7 @@ func (a *App) runTransfer(ctx context.Context, job transferJob) {
 		_ = a.st.UpdateTask(taskID, store.StatusRunning, "")
 	}
 
-	f, ferr := a.api.GetFile(tgbotapi.FileConfig{FileID: fileID})
-	if ferr != nil {
-		// 官方服务器对超过 20MB 的文件直接拒绝 getFile，这里给出可操作的提示
-		msg := fmt.Errorf("获取文件信息失败（超过 20MB 的文件需配置 TG_API_ID / TG_API_HASH 走 MTProto 下载）: %w", ferr)
-		if taskID > 0 {
-			_ = a.st.UpdateTask(taskID, store.StatusFailed, msg.Error())
-		}
-		a.notify(job, stateFailed, msg.Error(), "")
-		return
-	}
-
-	a.notify(job, stateDownloading, "", "")
-	localPath, err := a.downloadTelegramFile(ctx, f, fileName, size)
+	localPath, err := a.fetchToLocal(ctx, job)
 	if err != nil {
 		if taskID > 0 {
 			_ = a.st.UpdateTask(taskID, store.StatusFailed, err.Error())
@@ -546,6 +537,40 @@ func (a *App) fileDirectURL(filePath string) string {
 // 超了官方服务器会直接拒绝，不是我们代码能绕的。
 const officialMaxFileBytes = 20 << 20
 
+// fetchToLocal 把 Telegram 文件取到本地临时目录。
+//
+// 关键顺序：>20MB 的文件，官方 getFile 会**直接返回 400 "file is too big"**
+// （不是只有下载那一步才失败）。如果像早期版本那样先无脑 getFile、失败就 return，
+// MTProto 这条路会被 getFile 的错误提前堵死——配了 TG_API_ID/TG_API_HASH 也下不了大文件。
+//
+// 因此：
+//  1. 明确超过 20MB 且 MTProto 可用 → 跳过 getFile，直接用 file_id 走 MTProto；
+//  2. getFile 失败但 MTProto 可用 → 仍用 file_id 兜底（MTProto 不需要 file_path）；
+//  3. 其余情况走官方 getFile + 下载（小文件零额外连接）。
+func (a *App) fetchToLocal(ctx context.Context, job transferJob) (string, error) {
+	useMTProto := a.mtproto != nil && a.mtproto.Enabled()
+	if useMTProto && job.size > officialMaxFileBytes {
+		a.notify(job, stateDownloading, "", "")
+		return a.mtprotoDownload(ctx, job.fileID, job.fileName)
+	}
+
+	f, err := a.api.GetFile(tgbotapi.FileConfig{FileID: job.fileID})
+	if err != nil {
+		if useMTProto {
+			a.notify(job, stateDownloading, "", "")
+			if p, derr := a.mtprotoDownload(ctx, job.fileID, job.fileName); derr == nil {
+				return p, nil
+			} else {
+				a.log.Warn("getFile 失败后 MTProto 兜底下载同样失败", "err", derr)
+			}
+		}
+		return "", fmt.Errorf("获取文件信息失败（超过 20MB 的文件需配置 TG_API_ID / TG_API_HASH 走 MTProto 下载）: %w", err)
+	}
+
+	a.notify(job, stateDownloading, "", "")
+	return a.downloadTelegramFile(ctx, f, job.fileName, job.size)
+}
+
 // downloadTelegramFile 把文件拉到本地临时目录，返回本地路径。
 //
 // 两条路：
@@ -660,9 +685,18 @@ func sanitizeFileName(name string) string {
 	name = strings.ReplaceAll(name, "\\", "_")
 	name = strings.Trim(name, ".")
 	if r := []rune(name); len(r) > 180 {
-		// 截断到 180 个字符：扩展名保留在截断后的前缀里即可，
-		// 不必再单独拼接（否则会与已截断的前缀重复、超长）。
-		name = string(r[:180])
+		// 截断必须保住扩展名：名字一长，直接切前 180 字会把末尾的 .mp4 一起切掉，
+		// 115 那边就认不出文件类型了。先留足扩展名的位置，再截前缀。
+		ext := filepath.Ext(name)
+		base := strings.TrimSuffix(name, ext)
+		keep := 180 - len([]rune(ext))
+		if keep < 1 {
+			keep = 1
+		}
+		if br := []rune(base); len(br) > keep {
+			base = string(br[:keep])
+		}
+		name = base + ext
 	}
 	if name == "" || name == "." || name == ".." {
 		return ""
