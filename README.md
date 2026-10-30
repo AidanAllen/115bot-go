@@ -183,6 +183,41 @@ MTProto 登录的身份是 **bot token**（`client.Auth().Bot`），不是某个
 
 ### 5. Docker 部署
 
+两条路，**择一使用**，效果一样：
+
+| 方式 | 服务器上要编译吗 | 适用场景 |
+|---|---|---|
+| **A. 拉现成镜像**（推荐） | ❌ 不用 | 新服务器、想省事 |
+| B. 用预编译二进制打包 | ❌ 不用（本机编译） | 离线/内网环境 |
+
+#### A. 拉 GHCR 现成镜像（推荐）
+
+镜像由 GitHub Actions 自动构建并推送，已含 **linux/amd64 + linux/arm64**
+双架构，Docker 会自动挑匹配的那一个。**服务器上不用装 Go、不用编译**：
+
+```bash
+# 1) 建目录
+mkdir -p /opt/hi_115bot && cd /opt/hi_115bot
+
+# 2) 下载编排文件 + 配好 .env（参考 .env.example）
+#    见仓库里的 docker-compose.ghcr.yml，存成 docker-compose.yml
+mkdir -p data && chown -R 101:101 data
+chmod 600 .env
+
+# 3) 启动
+docker compose up -d
+```
+
+更新：
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+> 镜像是公开的，新服务器**无需 `docker login`**，匿名即可拉取。
+
+#### B. 用预编译二进制打包（离线友好）
+
 ```bash
 # 把 docker-compose.yml、Dockerfile.runtime、.dockerignore、
 # bin/115bot-linux-amd64、.env 放到同一目录后：
@@ -204,6 +239,9 @@ docker compose logs -f                                   # 看到「机器人已
 docker run --rm --env-file .env -v "$PWD/data:/app/data" \
   hi_115bot:latest --check-cookie                        # 校验 115 登录态
 ```
+
+> 同一个 bot token 不要同时跑两个容器，否则会互相抢 Telegram 轮询（Conflict）。
+> 上面这条 `docker run` 只在**现网容器已停**或确认不冲突时才用。
 
 ### 6. 升级（一键部署脚本）
 
