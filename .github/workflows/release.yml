@@ -87,11 +87,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${GITHUB_REF_NAME}" "$OUT" "$OUT.sha256" --clobber
 
-  # README 顶部的 release 徽章是**静态值**（形如 release-v1.0.1-blue），
-  # 刻意不调 GitHub API：动态徽章在 API 限流/网络抖动时会裂图或显示
-  # "no releases or repo not found"。代价是版本号需要同步，这个 job 负责自动跟上。
+  # README 顶部的徽章是仓库内自托管 SVG（docs/badges/），不依赖 shields.io：
+  # 部分网络到 img.shields.io / github.com 间歇性超时，动态徽章还会因 API 限流
+  # 裂图。代价是 release 版本号需要同步，这个 job 负责自动更新 release.svg
+  # （SVG 里的版本文本共 3 处：aria-label / title / text；text 带 textLength，
+  # 版本号变长时会自动压缩字形，无需调整宽度）。
   sync-badge:
-    name: Sync README release badge
+    name: Sync release badge version
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
@@ -102,17 +104,17 @@ jobs:
         with:
           ref: main
 
-      - name: 更新 README 静态 release 徽章到本 tag 版本
+      - name: 更新 release.svg 的版本号到本 tag
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          # 只替换 release-vX.Y.Z 这一段，正文里出现的版本号一律不动
-          sed -i -E "s|release-v[0-9]+\.[0-9]+\.[0-9]+|release-v${VERSION}|g" README.md
-          if git diff --quiet -- README.md; then
-            echo "README 徽章已是 v${VERSION}，无需提交"
+          TAG="${GITHUB_REF_NAME}"
+          # 只替换 SVG 内的 vX.Y.Z 文本，README 正文里的版本号一律不动
+          sed -i -E "s|v[0-9]+\.[0-9]+\.[0-9]+|${TAG}|g" docs/badges/release.svg
+          if git diff --quiet -- docs/badges/release.svg; then
+            echo "release.svg 已是 ${TAG}，无需提交"
             exit 0
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "docs: 同步 README release 徽章到 v${VERSION}" -- README.md
+          git commit -m "docs: 同步 release 徽章到 ${TAG}" -- docs/badges/release.svg
           git push origin main

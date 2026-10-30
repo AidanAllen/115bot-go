@@ -1,6 +1,6 @@
 APP        := 115bot
 PKG        := github.com/AidanAllen/115bot-go
-VERSION    ?= 1.0.1
+VERSION    ?= 1.0.2
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS    := -s -w \
 	-X $(PKG)/internal/bot.Version=$(VERSION) \
@@ -43,7 +43,7 @@ check-cookie:
 	go run ./cmd/bot --check-cookie
 
 # 一键更新部署到服务器：编译 -> 上传 -> 重建 -> 清理上一版遗留镜像与文件
-#   make deploy VERSION=1.0.1
-#   CLEAN_ONLY=1 make deploy VERSION=1.0.1   # 只清理，不重建
+#   make deploy VERSION=1.0.2
+#   CLEAN_ONLY=1 make deploy VERSION=1.0.2   # 只清理，不重建
 deploy:
 	@./scripts/deploy.sh $(VERSION)

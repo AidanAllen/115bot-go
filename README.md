@@ -1,14 +1,14 @@
 # 115bot-go
 
-[![Go Version](https://img.shields.io/badge/Go-1.23.4-00ADD8?style=flat-square)](https://go.dev/)
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/AidanAllen/115bot-go/ci.yml?style=flat-square&label=CI)](https://github.com/AidanAllen/115bot-go/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-v1.0.1-blue?style=flat-square)](https://github.com/AidanAllen/115bot-go/releases)
+[![Go Version](docs/badges/go.svg)](https://go.dev/)
+[![License](docs/badges/license.svg)](LICENSE)
+[![CI](docs/badges/ci.svg)](https://github.com/AidanAllen/115bot-go/actions/workflows/ci.yml)
+[![Release](docs/badges/release.svg)](https://github.com/AidanAllen/115bot-go/releases)
 
-<!-- 徽章刻意用固定值而非 shields.io 的动态查询（github/v/release）：
-     动态查询要回源调 GitHub API，API 限流或网络抖动时会裂图、或显示
-     "no releases or repo not found"。release 版本号由 release.yml 的
-     sync-badge job 在打 tag 时自动同步，不需要手动改。 -->
+<!-- 徽章为仓库内自托管 SVG（docs/badges/），不依赖 shields.io 等第三方服务：
+     部分网络环境到 img.shields.io / github.com 间歇性超时，动态徽章还会因
+     GitHub API 限流裂图，自托管后任何环境都能显示。release 版本号由
+     release.yml 的 sync-badge job 在发版时自动更新 release.svg。 -->
 
 115 网盘自动化 Telegram 机器人（Go 版）。把 Telegram 里的视频、文件、磁力链一键转存到你的 115 网盘。
 
@@ -97,7 +97,7 @@ rem 编辑 .env 填入 BOT_TOKEN
 make build && ./bin/115bot
 
 # 或交叉编译 Linux 二进制（服务器部署用）
-make VERSION=1.0.1 linux        # 产出 bin/115bot-linux-amd64
+make VERSION=1.0.2 linux        # 产出 bin/115bot-linux-amd64
 
 # 所有平台一次性构建（Release 就是这么打的包）
 make dist                       # = ./scripts/build-all.sh，产物在 bin/dist/
@@ -211,10 +211,10 @@ docker run --rm --env-file .env -v "$PWD/data:/app/data" \
 编译 → 上传 → 备份数据库 → 原子换二进制 → 重建容器 → **清理上一版遗留的镜像与临时文件**：
 
 ```bash
-./scripts/deploy.sh 1.0.1              # 等价于 make deploy VERSION=1.0.1
-SKIP_TESTS=1 ./scripts/deploy.sh 1.0.1 # 跳过 vet/test
-CLEAN_ONLY=1 ./scripts/deploy.sh 1.0.1 # 只清理旧镜像与残留，不重建
-TARGET_ARCH=arm64 ./scripts/deploy.sh 1.0.1   # 目标是 ARM 服务器
+./scripts/deploy.sh 1.0.2              # 等价于 make deploy VERSION=1.0.2
+SKIP_TESTS=1 ./scripts/deploy.sh 1.0.2 # 跳过 vet/test
+CLEAN_ONLY=1 ./scripts/deploy.sh 1.0.2 # 只清理旧镜像与残留，不重建
+TARGET_ARCH=arm64 ./scripts/deploy.sh 1.0.2   # 目标是 ARM 服务器
 ```
 
 清理范围**只针对本项目**（按「悬空 + 入口 `/app/115bot`」识别），不会误删其他应用的镜像。
