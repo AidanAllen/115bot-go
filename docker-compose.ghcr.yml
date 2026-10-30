@@ -1,0 +1,48 @@
+# ============================================================
+# 新服务器从零部署专用：直接拉 GitHub Actions 构建好的镜像
+# ============================================================
+#
+# 适用于「一台全新的服务器，只用 GitHub 上的代码把 bot 跑起来」。
+# **服务器上完全不需要编译**——编译在 GitHub Actions 上做完了。
+#
+# 三步跑起来：
+#   1. mkdir -p /opt/hi_115bot && cd /opt/hi_115bot
+#   2. 把本文件存为 docker-compose.yml，并配好 .env（见 .env.example）
+#   3. docker compose up -d
+#
+# 更新：docker compose pull && docker compose up -d
+#
+# 注意：本文件与仓库里的 Dockerfile.runtime 那套（本机编译上传）无关，
+#      两者择一即可，不要混用。
+# ============================================================
+
+services:
+  hi_115bot:
+    # 镜像由 .github/workflows/docker-image.yml 构建并推送，
+    # 已产出 linux/amd64 与 linux/arm64 两个架构，docker 会自动挑选匹配的本机架构。
+    image: ghcr.io/aidanallen/115bot-go:latest
+
+    container_name: hi_115bot
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    # 以 uid 101 运行（沿用既有约定的属主，避免 data/ 里的 SQLite 出权限问题）。
+    # 首次部署务必先建好目录并赋权：
+    #   mkdir -p data && chown -R 101:101 data
+    user: "101:101"
+
+    volumes:
+      # 数据库（含 115 cookie 明文）与 MTProto 会话都在这里，务必保留
+      - ./data:/app/data
+
+    # Go 进程常驻约 15-25MB，这里留足余量并防止异常膨胀
+    mem_limit: 256m
+    memswap_limit: 256m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
